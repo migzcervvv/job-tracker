@@ -482,3 +482,12 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+# --- Frontend (Vite/React) ---
+client/dist/
+client/.env
+client/.env.local
+client/.env.*.local
+
+# --- API secrets (never commit, even though user-secrets already lives outside the repo) ---
+JobTracker.Api/appsettings.Development.json
+JobTracker.Api/appsettings.Production.json
