@@ -1,21 +1,20 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { loginRequest } from './authService.js';
+import { loginRequest, registerRequest } from './authService.js';
+import { AUTH_STORAGE_KEY } from './constants.js';
 
 const AuthContext = createContext(null);
-
-const STORAGE_KEY = 'jobtracker.auth';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
     if (raw) {
       try {
         setUser(JSON.parse(raw));
       } catch {
-        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(AUTH_STORAGE_KEY);
       }
     }
     setLoading(false);
@@ -23,13 +22,20 @@ export function AuthProvider({ children }) {
 
   async function login(email, password) {
     const result = await loginRequest(email, password);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(result));
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(result));
+    setUser(result);
+    return result;
+  }
+
+  async function register(email, password) {
+    const result = await registerRequest(email, password);
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(result));
     setUser(result);
     return result;
   }
 
   function logout() {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(AUTH_STORAGE_KEY);
     setUser(null);
   }
 
@@ -39,6 +45,7 @@ export function AuthProvider({ children }) {
     isAuthenticated: Boolean(user),
     isAdmin: user?.role === 'admin',
     login,
+    register,
     logout,
   };
 

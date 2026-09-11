@@ -22,6 +22,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services
     .AddIdentity<IdentityUser<Guid>, IdentityRole<Guid>>(options =>
     {
+        options.Password.RequireNonAlphanumeric = false;
+        options.Password.RequireDigit = true;
         options.Password.RequiredLength = 8;
         options.User.RequireUniqueEmail = true;
     })

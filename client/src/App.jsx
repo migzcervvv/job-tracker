@@ -1,19 +1,25 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { GooeyToaster } from 'goey-toast';
 import { AuthProvider } from './auth/AuthContext.jsx';
 import { ProtectedRoute, AdminRoute } from './components/ProtectedRoute.jsx';
 import { Login } from './pages/Login.jsx';
+import { Register } from './pages/Register.jsx';
 import { Dashboard } from './pages/Dashboard.jsx';
+import { NewApplication } from './pages/NewApplication.jsx';
 import { Placeholder } from './pages/Placeholder.jsx';
 
 export default function App() {
   return (
     <BrowserRouter>
+      <GooeyToaster position="top-center" theme="dark" />
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
 
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/applications/new" element={<NewApplication />} />
             <Route
               path="/skills-gap"
               element={

@@ -1,32 +1,28 @@
 import { useState } from 'react';
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { extractErrorMessage } from '../api/errors.js';
 import { notify } from '../notify.js';
 
-export function Login() {
-  const { login, isAuthenticated } = useAuth();
+export function Register() {
+  const { register, isAuthenticated } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  if (isAuthenticated) {
-    const dest = location.state?.from?.pathname || '/';
-    return <Navigate to={dest} replace />;
-  }
+  if (isAuthenticated) return <Navigate to="/" replace />;
 
   async function handleSubmit(e) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await login(email, password);
-      notify.success('Signed in');
+      await register(email, password);
+      notify.success('Account created', 'Welcome to job.tracker.');
       navigate('/', { replace: true });
     } catch (err) {
-      notify.error('Sign in failed', extractErrorMessage(err, 'Invalid email or password'));
+      notify.error('Registration failed', extractErrorMessage(err, 'Please check your details and try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -38,7 +34,7 @@ export function Login() {
         <div className="login-brand">
           job<span>.</span>tracker
         </div>
-        <p className="login-sub">Sign in to your pipeline.</p>
+        <p className="login-sub">Create an account.</p>
 
         <form onSubmit={handleSubmit}>
           <div className="field">
@@ -58,20 +54,22 @@ export function Login() {
             <input
               id="password"
               type="password"
-              autoComplete="current-password"
+              autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              minLength={8}
             />
+            <div className="field-hint">At least 8 characters.</div>
           </div>
 
           <button className="btn-primary" type="submit" disabled={submitting}>
-            {submitting ? 'Signing in…' : 'Sign in'}
+            {submitting ? 'Creating account…' : 'Create account'}
           </button>
         </form>
 
         <p className="field-hint" style={{ marginTop: 16 }}>
-          No account? <Link to="/register">Register</Link>
+          Already have an account? <Link to="/login">Sign in</Link>
         </p>
       </div>
     </div>

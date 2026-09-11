@@ -36,5 +36,11 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
             .HasMany(a => a.TimelineEvents)
             .WithOne(t => t.Application!)
             .HasForeignKey(t => t.ApplicationId);
+
+        builder.Entity<TimelineEvent>()
+            .HasQueryFilter(t => _currentUserId == null || t.Application!.UserId == _currentUserId);
+
+        builder.Entity<StageDetail>()
+            .HasQueryFilter(s => _currentUserId == null || s.Application!.UserId == _currentUserId);
     }
 }
