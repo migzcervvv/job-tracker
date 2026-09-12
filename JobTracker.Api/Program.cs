@@ -55,13 +55,23 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+var corsOrigin = builder.Configuration["Cors:Origin"];
+
+if (string.IsNullOrWhiteSpace(corsOrigin))
+{
+    throw new InvalidOperationException(
+        "Cors:Origin is not configured."
+    );
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Frontend", policy =>
     {
-        policy.WithOrigins(builder.Configuration["Cors:Origin"] ?? "http://localhost:5173")
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+        policy
+            .WithOrigins(corsOrigin)
+            .AllowAnyHeader()
+            .AllowAnyMethod();
     });
 });
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
