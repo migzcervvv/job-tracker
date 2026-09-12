@@ -4,6 +4,7 @@ using JobTracker.Api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http;
 using System.Security.Claims;
 using System.Text.Json;
 
@@ -12,7 +13,10 @@ namespace JobTracker.Api.Controllers;
 [ApiController]
 [Route("api/applications")]
 [Authorize]
-public class ApplicationsController(AppDbContext db) : ControllerBase
+public class ApplicationsController(AppDbContext db, 
+    IHttpClientFactory httpClientFactory, 
+    IConfiguration config, 
+    ILogger<ApplicationsController> logger) : ControllerBase
 {
     private Guid CurrentUserId =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -45,6 +49,20 @@ public class ApplicationsController(AppDbContext db) : ControllerBase
         });
 
         await db.SaveChangesAsync();
+        try
+        {
+            var webhookUrl = config["N8n:SkillExtractionWebhookUrl"];
+            if (!string.IsNullOrEmpty(webhookUrl))
+            {
+                var client = httpClientFactory.CreateClient("n8n");
+                client.Timeout = TimeSpan.FromSeconds(5);
+                await client.PostAsJsonAsync(webhookUrl, new { applicationId = app.Id, rawDescription = app.RawDescription });
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Skill extraction webhook failed for application {Id}", app.Id);
+        }
         return CreatedAtAction(nameof(List), new { id = app.Id }, app);
     }
 

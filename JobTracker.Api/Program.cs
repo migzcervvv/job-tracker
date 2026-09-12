@@ -18,7 +18,7 @@ builder.Services.AddHttpClient();
 builder.Services.AddScoped<ICurrentUserAccessor, CurrentUserAccessor>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<ISupabaseStorageService, SupabaseStorageService>();
-
+builder.Services.AddScoped<ISkillResolver, SkillResolver>();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 

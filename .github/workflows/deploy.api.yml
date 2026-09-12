@@ -1,0 +1,34 @@
+name: deploy-api
+on:
+  push:
+    branches: [main]
+    paths:
+      - "JobTracker.Api/**"
+
+jobs:
+  build-test-deploy:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+
+      - name: Restore
+        run: dotnet restore JobTracker.Api/JobTracker.Api.csproj
+
+      - name: Build
+        run: dotnet build JobTracker.Api/JobTracker.Api.csproj --no-restore -c Release
+
+      - name: Test
+        run: dotnet test --no-build -c Release
+
+      - name: Publish via Web Deploy
+        run: >
+          dotnet publish JobTracker.Api/JobTracker.Api.csproj
+          -c Release
+          /p:DeployOnBuild=true
+          /p:PublishProfile=JobTracker.Api/Properties/PublishProfiles/site90996-WebDeploy1.pubxml
+          /p:Username=${{ secrets.MONSTERASP_USERNAME }}
+          /p:Password=${{ secrets.MONSTERASP_PASSWORD }}
+          /p:AllowUntrustedCertificate=true
