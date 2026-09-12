@@ -6,6 +6,8 @@ import { Login } from './pages/Login.jsx';
 import { Register } from './pages/Register.jsx';
 import { Dashboard } from './pages/Dashboard.jsx';
 import { NewApplication } from './pages/NewApplication.jsx';
+import { SkillsGap } from './pages/SkillsGap.jsx';
+import { Settings } from './pages/Settings.jsx';
 import { Placeholder } from './pages/Placeholder.jsx';
 
 export default function App() {
@@ -20,24 +22,8 @@ export default function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/applications/new" element={<NewApplication />} />
-            <Route
-              path="/skills-gap"
-              element={
-                <Placeholder
-                  title="Skills gap"
-                  note="Bar chart of skill frequency across your applications vs. your own skills. Reads GET /api/analytics/skills-gap."
-                />
-              }
-            />
-            <Route
-              path="/settings"
-              element={
-                <Placeholder
-                  title="Settings"
-                  note="Manage your claimed skills and profile."
-                />
-              }
-            />
+            <Route path="/skills-gap" element={<SkillsGap />} />
+            <Route path="/settings" element={<Settings />} />
 
             <Route element={<AdminRoute />}>
               <Route

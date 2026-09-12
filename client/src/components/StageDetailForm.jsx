@@ -1,68 +1,53 @@
-import { useState } from "react";
-import { STAGE_FIELDS } from "../api/stageFields.js";
-import { upsertStageDetail } from "../api/applications.js";
-import { extractErrorMessage } from "../api/errors.js";
-import { notify } from "../notify.js";
-import { STATUS } from "../api/statusMeta.js";
+import { useState } from 'react';
+import { STAGE_FIELDS } from '../api/stageFields.js';
+import { upsertStageDetail } from '../api/applications.js';
+import { extractErrorMessage } from '../api/errors.js';
+import { notify } from '../notify.js';
+import { STATUS } from '../api/statusMeta.js';
+
+// Long-form inputs get the full row; short ones sit two-up in the grid.
+const FULL_WIDTH_TYPES = new Set(['textarea', 'url', 'checkbox']);
 
 function FieldInput({ field, value, onChange }) {
-  if (field.type === "textarea") {
-    return (
-      <textarea
-        rows={3}
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          width: "100%",
-          background: "var(--panel-raised)",
-          border: "1px solid var(--line)",
-          borderRadius: "var(--radius)",
-          padding: "8px 10px",
-          color: "var(--text)",
-          resize: "vertical",
-        }}
-      />
-    );
+  if (field.type === 'textarea') {
+    return <textarea rows={3} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
   }
 
-  if (field.type === "select") {
+  if (field.type === 'select') {
     return (
-      <select value={value ?? ""} onChange={(e) => onChange(e.target.value)}>
+      <select value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
         <option value="">—</option>
         {field.options.map((opt) => (
-          <option key={opt} value={opt}>
-            {opt}
-          </option>
+          <option key={opt} value={opt}>{opt}</option>
         ))}
       </select>
     );
   }
 
-  if (field.type === "checkbox") {
+  if (field.type === 'checkbox') {
     return (
-      <input
-        type="checkbox"
-        checked={Boolean(value)}
-        onChange={(e) => onChange(e.target.checked)}
-      />
+      <div className="field-checkbox">
+        <input
+          id={`sf-${field.key}`}
+          type="checkbox"
+          checked={Boolean(value)}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <label htmlFor={`sf-${field.key}`}>{field.label}</label>
+      </div>
     );
   }
 
   return (
     <input
       type={field.type}
-      value={value ?? ""}
+      value={value ?? ''}
       onChange={(e) => onChange(e.target.value)}
     />
   );
 }
 
-export function StageDetailForm({
-  applicationId,
-  stage,
-  initialFields,
-  onSaved,
-}) {
+export function StageDetailForm({ applicationId, stage, initialFields, onSaved }) {
   const fieldDefs = STAGE_FIELDS[stage];
   const [values, setValues] = useState(initialFields ?? {});
   const [submitting, setSubmitting] = useState(false);
@@ -77,17 +62,11 @@ export function StageDetailForm({
     e.preventDefault();
     setSubmitting(true);
     try {
-      const saved = await notify.promise(
-        upsertStageDetail(applicationId, stage, values),
-        {
-          loading: "Saving…",
-          success:
-            stage === STATUS.InterviewScheduled
-              ? "Round saved"
-              : "Stage details saved",
-          error: (err) => extractErrorMessage(err, "Could not save"),
-        },
-      );
+      const saved = await notify.promise(upsertStageDetail(applicationId, stage, values), {
+        loading: 'Saving…',
+        success: stage === STATUS.InterviewScheduled ? 'Round saved' : 'Stage details saved',
+        error: (err) => extractErrorMessage(err, 'Could not save'),
+      });
       onSaved(saved);
       if (stage === STATUS.InterviewScheduled) setValues({}); // next save = a new round
     } catch {
@@ -98,24 +77,39 @@ export function StageDetailForm({
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      {fieldDefs.map((f) => (
-        <div className="field" key={f.key} style={{ marginBottom: 10 }}>
-          <label>{f.label}</label>
-          <FieldInput
-            field={f}
-            value={values[f.key]}
-            onChange={(v) => setField(f.key, v)}
-          />
-        </div>
-      ))}
-      <button className="icon-btn" type="submit" disabled={submitting}>
-        {submitting
-          ? "Saving…"
-          : stage === STATUS.InterviewScheduled
-            ? "Save round"
-            : "Save stage details"}
-      </button>
+    <form className="stage-form" onSubmit={handleSubmit}>
+      <div className="stage-form-grid">
+        {fieldDefs.map((f) => {
+          const spanFull = FULL_WIDTH_TYPES.has(f.type);
+          // Checkbox renders its own label inline — skip the standard field wrapper for it.
+          if (f.type === 'checkbox') {
+            return (
+              <div className="field span-2" key={f.key}>
+                <FieldInput field={f} value={values[f.key]} onChange={(v) => setField(f.key, v)} />
+              </div>
+            );
+          }
+          return (
+            <div className={`field${spanFull ? ' span-2' : ''}`} key={f.key}>
+              <label>{f.label}</label>
+              <FieldInput field={f} value={values[f.key]} onChange={(v) => setField(f.key, v)} />
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="stage-form-actions">
+        {stage === STATUS.InterviewScheduled && (
+          <span className="stage-form-hint">Saving adds a new round — it won't overwrite the last one.</span>
+        )}
+        <button className="btn-save" type="submit" disabled={submitting}>
+          {submitting
+            ? 'Saving…'
+            : stage === STATUS.InterviewScheduled
+              ? 'Save round'
+              : 'Save stage details'}
+        </button>
+      </div>
     </form>
   );
 }

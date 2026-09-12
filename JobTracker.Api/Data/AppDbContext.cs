@@ -19,6 +19,10 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
     public DbSet<Application> Applications => Set<Application>();
     public DbSet<StageDetail> StageDetails => Set<StageDetail>();
     public DbSet<TimelineEvent> TimelineEvents => Set<TimelineEvent>();
+    public DbSet<Skill> Skills => Set<Skill>();
+    public DbSet<ApplicationSkill> ApplicationSkills => Set<ApplicationSkill>();
+    public DbSet<UserSkill> UserSkills => Set<UserSkill>();
+    public DbSet<Resume> Resumes => Set<Resume>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -42,5 +46,15 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
 
         builder.Entity<StageDetail>()
             .HasQueryFilter(s => _currentUserId == null || s.Application!.UserId == _currentUserId);
+
+        // inside OnModelCreating:
+        builder.Entity<ApplicationSkill>().HasKey(x => new { x.ApplicationId, x.SkillId });
+        builder.Entity<UserSkill>().HasKey(x => new { x.UserId, x.SkillId });
+        builder.Entity<Skill>().HasIndex(s => s.Name).IsUnique();
+
+        builder.Entity<ApplicationSkill>()
+            .HasQueryFilter(x => _currentUserId == null || x.Application!.UserId == _currentUserId);
+        builder.Entity<UserSkill>()
+            .HasQueryFilter(x => _currentUserId == null || x.UserId == _currentUserId);
     }
 }
