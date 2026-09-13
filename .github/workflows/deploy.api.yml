@@ -24,7 +24,7 @@ jobs:
         run: dotnet build JobTracker.Api/JobTracker.Api.csproj --no-restore -c Release
 
       - name: Test
-        run: dotnet test JobTracker.Tests/JobTracker.Tests.csproj -c Release
+        run: dotnet test JobTracker.Api.Tests/JobTracker.Api.Tests.csproj -c Release
 
       - name: Publish via Web Deploy
         run: >
