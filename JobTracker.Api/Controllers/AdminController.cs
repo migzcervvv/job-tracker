@@ -89,7 +89,7 @@ public class AdminController(
             {
                 var client = httpFactory.CreateClient();
                 client.Timeout = TimeSpan.FromSeconds(5);
-                var res = await client.GetAsync($"{n8nBaseUrl.TrimEnd('/')}/healthz");
+                var res = await client.GetAsync($"{n8nBaseUrl.TrimEnd('/')}/health");
                 n8nStatus = res.IsSuccessStatusCode ? "healthy" : "unreachable";
             }
             catch { n8nStatus = "unreachable"; }
