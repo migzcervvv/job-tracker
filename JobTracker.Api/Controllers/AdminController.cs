@@ -81,7 +81,7 @@ public class AdminController(
         var n8nBaseUrl = config["N8n:BaseUrl"];
         if (string.IsNullOrEmpty(n8nBaseUrl))
         {
-            n8nStatus = "not_configured";
+            n8nStatus = $"not_configured";
         }
         else
         {
