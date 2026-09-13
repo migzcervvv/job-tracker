@@ -3,7 +3,6 @@ import { GooeyToaster } from 'goey-toast';
 import { AuthProvider } from './auth/AuthContext.jsx';
 import { ProtectedRoute, AdminRoute } from './components/ProtectedRoute.jsx';
 import { Login } from './pages/Login.jsx';
-import { Register } from './pages/Register.jsx';
 import { Dashboard } from './pages/Dashboard.jsx';
 import { NewApplication } from './pages/NewApplication.jsx';
 import { SkillsGap } from './pages/SkillsGap.jsx';
@@ -21,7 +20,6 @@ export default function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
 
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<Dashboard />} />

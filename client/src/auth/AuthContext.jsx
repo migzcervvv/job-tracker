@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { loginRequest, registerRequest } from './authService.js';
+import { loginRequest } from './authService.js';
 import { AUTH_STORAGE_KEY } from './constants.js';
 
 const AuthContext = createContext(null);
@@ -27,13 +27,6 @@ export function AuthProvider({ children }) {
     return result;
   }
 
-  async function register(email, password) {
-    const result = await registerRequest(email, password);
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(result));
-    setUser(result);
-    return result;
-  }
-
   function logout() {
     localStorage.removeItem(AUTH_STORAGE_KEY);
     setUser(null);
@@ -45,7 +38,6 @@ export function AuthProvider({ children }) {
     isAuthenticated: Boolean(user),
     isAdmin: user?.role === 'admin',
     login,
-    register,
     logout,
   };
 

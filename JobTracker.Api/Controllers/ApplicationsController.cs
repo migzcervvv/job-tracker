@@ -215,6 +215,21 @@ public class ApplicationsController(AppDbContext db,
 
         return Ok(new StageDetailResponse(target.Id, target.Stage, target.FieldsJson, target.CreatedAt));
     }
+    // ApplicationsController.cs — new action
+    [HttpGet("{id}/automation-status")]
+    public async Task<IActionResult> GetAutomationStatus(Guid id)
+    {
+        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
+        if (app is null) return NotFound();
+
+        var latest = await db.AutomationLogEntries
+            .Where(e => e.ApplicationId == id && e.Type == "skill_extraction")
+            .OrderByDescending(e => e.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        if (latest is null) return Ok(new { status = (string?)null });
+        return Ok(new { status = latest.Status, message = latest.Message, createdAt = latest.CreatedAt });
+    }
 }
 
 public record CreateApplicationRequest(string Title, string? Company, string? JobUrl, string RawDescription);

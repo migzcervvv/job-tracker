@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { STATUS, STATUS_META, statusMeta } from '../api/statusMeta.js';
-import { getApplication, deleteApplication } from '../api/applications.js';
+import { getApplication, deleteApplication, getAutomationStatus } from '../api/applications.js';
 import { getApplicationSkills, setApplicationSkills } from '../api/skills.js';
 import { relativeTime } from '../api/dates.js';
 import { eventLabel } from '../api/timelineMeta.js';
@@ -30,6 +30,8 @@ export function DetailModal({ application, onClose, onStatusChange, onDeleted })
   const [timeline, setTimeline] = useState(null);
   const [stageDetails, setStageDetails] = useState(null);
   const [requiredSkills, setRequiredSkills] = useState(null);
+  const [automationStatus, setAutomationStatus] = useState(null);
+  const skillsRefetchedRef = useRef(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -64,6 +66,52 @@ export function DetailModal({ application, onClose, onStatusChange, onDeleted })
       });
     return () => { cancelled = true; };
   }, [application?.id, application?.status]);
+
+  // Skill extraction runs asynchronously in n8n, typically a few seconds
+  // behind the create request itself. Poll until it resolves so the user
+  // sees "extracting…" rather than an empty tag editor with no explanation.
+  useEffect(() => {
+    if (!application) {
+      setAutomationStatus(null);
+      return;
+    }
+    let cancelled = false;
+    let intervalId = null;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 10; // ~30s at 3s apart — long enough for a slow free-tier LLM call, not so long it polls forever on a genuinely lost webhook
+    skillsRefetchedRef.current = false;
+
+    function poll() {
+      getAutomationStatus(application.id)
+        .then((data) => {
+          if (cancelled) return;
+          setAutomationStatus(data);
+          attempts += 1;
+
+          if (data.status === 'succeeded' && !skillsRefetchedRef.current) {
+            skillsRefetchedRef.current = true;
+            getApplicationSkills(application.id)
+              .then((names) => { if (!cancelled) setRequiredSkills(names); })
+              .catch(() => {}); // non-critical — tags just won't refresh until modal reopens
+          }
+
+          if (data.status !== 'triggered' || attempts >= MAX_ATTEMPTS) {
+            if (intervalId) clearInterval(intervalId);
+          }
+        })
+        .catch(() => {
+          if (!cancelled && intervalId) clearInterval(intervalId);
+        });
+    }
+
+    poll();
+    intervalId = setInterval(poll, 3000);
+
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [application?.id]);
 
   const currentStage = application?.status;
   const isInterview = currentStage === STATUS.InterviewScheduled;
@@ -186,6 +234,7 @@ export function DetailModal({ application, onClose, onStatusChange, onDeleted })
 
               <div style={{ marginBottom: 20 }}>
                 <div className="section-label">Required skills</div>
+                <AutomationStatusBanner automationStatus={automationStatus} />
                 {requiredSkills === null ? (
                   <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>Loading…</p>
                 ) : (
@@ -267,4 +316,28 @@ export function StatusPill({ status }) {
       {meta.label}
     </span>
   );
+}
+
+function AutomationStatusBanner({ automationStatus }) {
+  if (!automationStatus || !automationStatus.status) return null;
+
+  if (automationStatus.status === 'triggered') {
+    return (
+      <div className="automation-banner automation-banner-pending">
+        <span className="automation-spinner" />
+        Extracting skills from the job description…
+      </div>
+    );
+  }
+
+  if (automationStatus.status === 'failed') {
+    return (
+      <div className="automation-banner automation-banner-failed">
+        Automatic skill extraction failed{automationStatus.message ? `: ${automationStatus.message}` : '.'}
+        {' '}Add skills manually below.
+      </div>
+    );
+  }
+
+  return null; // succeeded — the tags speak for themselves, no banner needed
 }

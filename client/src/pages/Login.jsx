@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { extractErrorMessage } from '../api/errors.js';
 import { notify } from '../notify.js';
@@ -69,10 +69,6 @@ export function Login() {
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
-
-        <p className="field-hint" style={{ marginTop: 16 }}>
-          No account? <Link to="/register">Register</Link>
-        </p>
       </div>
     </div>
   );

@@ -9,19 +9,19 @@ namespace JobTracker.Api.Controllers;
 [Route("api/auth")]
 public class AuthController(UserManager<IdentityUser<Guid>> users, ITokenService tokens) : ControllerBase
 {
-    [HttpPost("register")]
-    public async Task<ActionResult<AuthResponse>> Register(RegisterRequest req)
-    {
-        var user = new IdentityUser<Guid> { UserName = req.Email, Email = req.Email };
-        var result = await users.CreateAsync(user, req.Password);
-        if (!result.Succeeded)
-            return BadRequest(result.Errors.Select(e => e.Description));
+    //[HttpPost("register")]
+    //public async Task<ActionResult<AuthResponse>> Register(RegisterRequest req)
+    //{
+    //    var user = new IdentityUser<Guid> { UserName = req.Email, Email = req.Email };
+    //    var result = await users.CreateAsync(user, req.Password);
+    //    if (!result.Succeeded)
+    //        return BadRequest(result.Errors.Select(e => e.Description));
 
-        await users.AddToRoleAsync(user, "user");
-        var roles = await users.GetRolesAsync(user);
-        var token = tokens.CreateToken(user, roles);
-        return Ok(new AuthResponse(token, user.Email!, roles.FirstOrDefault() ?? "user"));
-    }
+    //    await users.AddToRoleAsync(user, "user");
+    //    var roles = await users.GetRolesAsync(user);
+    //    var token = tokens.CreateToken(user, roles);
+    //    return Ok(new AuthResponse(token, user.Email!, roles.FirstOrDefault() ?? "user"));
+    //}
 
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponse>> Login(LoginRequest req)

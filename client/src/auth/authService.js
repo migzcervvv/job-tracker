@@ -5,8 +5,3 @@ export async function loginRequest(email, password) {
   // AuthResponse: { token, email, role }
   return data;
 }
-
-export async function registerRequest(email, password) {
-  const { data } = await api.post('/api/auth/register', { email, password });
-  return data;
-}

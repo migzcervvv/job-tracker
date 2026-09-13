@@ -36,3 +36,8 @@ export async function upsertStageDetail(id, stage, fields) {
 export async function deleteApplication(id) {
   await api.delete(`/api/applications/${id}`);
 }
+
+export async function getAutomationStatus(id) {
+  const { data } = await api.get(`/api/applications/${id}/automation-status`);
+  return data;
+}

@@ -120,25 +120,31 @@ public class AdminController(
     // ---------- Skills ----------
 
     [HttpGet("skills")]
-    public async Task<IActionResult> ListSkills()
+    public async Task<IActionResult> ListSkills([FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var skills = await db.Skills.ToListAsync();
-        var appCounts = await db.ApplicationSkills
-            .GroupBy(x => x.SkillId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync();
-        var userCounts = await db.UserSkills
-            .GroupBy(x => x.SkillId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync();
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 100);
 
-        var result = skills.Select(s => new
+        var skills = await db.Skills.ToListAsync();
+        var appCounts = await db.ApplicationSkills.GroupBy(x => x.SkillId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync();
+        var userCounts = await db.UserSkills.GroupBy(x => x.SkillId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync();
+
+        var all = skills.Select(s => new
         {
             s.Id,
             s.Name,
             applicationUsage = appCounts.FirstOrDefault(c => c.Key == s.Id)?.Count ?? 0,
             userUsage = userCounts.FirstOrDefault(c => c.Key == s.Id)?.Count ?? 0,
-        })
-        .OrderByDescending(s => s.applicationUsage + s.userUsage)
-        .ToList();
+        });
 
-        return Ok(result);
+        if (!string.IsNullOrWhiteSpace(search))
+            all = all.Where(s => s.Name.Contains(search, StringComparison.OrdinalIgnoreCase));
+
+        var ordered = all.OrderByDescending(s => s.applicationUsage + s.userUsage).ToList();
+        var totalCount = ordered.Count;
+        var pageItems = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+
+        return Ok(new { items = pageItems, totalCount, page, pageSize });
     }
 
     [HttpPost("skills/merge")]
@@ -180,6 +186,20 @@ public class AdminController(
 
         return Ok(new { mergedInto = target.Name });
     }
+    [HttpPost("users")]
+    public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest req)
+    {
+        var user = new IdentityUser<Guid> { UserName = req.Email, Email = req.Email };
+        var result = await _users.CreateAsync(user, req.Password);
+        if (!result.Succeeded) return BadRequest(result.Errors.Select(e => e.Description));
+
+        var role = string.IsNullOrWhiteSpace(req.Role) ? "user" : req.Role;
+        await _users.AddToRoleAsync(user, role);
+
+        return Ok(new { user.Id, user.Email, role });
+    }
+
+    public record CreateUserRequest(string Email, string Password, string? Role);
 }
 
 public record SetRoleRequest(string Role);

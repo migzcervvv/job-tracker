@@ -93,12 +93,58 @@ using (var scope = app.Services.CreateScope())
             await roleManager.CreateAsync(new IdentityRole<Guid>(role));
     }
 }
+
+using (var scope = app.Services.CreateScope())
+{
+    var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
+    foreach (var role in new[] { "admin", "user" })
+    {
+        if (!await roleManager.RoleExistsAsync(role))
+            await roleManager.CreateAsync(new IdentityRole<Guid>(role));
+    }
+
+    // Bootstrap: only fires if literally no admin exists yet — safe to leave
+    // in permanently, since it's a no-op once you have at least one.
+    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<IdentityUser<Guid>>>();
+    var existingAdmins = await userManager.GetUsersInRoleAsync("admin");
+
+    if (existingAdmins.Count == 0)
+    {
+        var bootstrapEmail = app.Configuration["Bootstrap:AdminEmail"];
+        var bootstrapPassword = app.Configuration["Bootstrap:AdminPassword"];
+
+        if (!string.IsNullOrEmpty(bootstrapEmail) && !string.IsNullOrEmpty(bootstrapPassword))
+        {
+            var user = await userManager.FindByEmailAsync(bootstrapEmail);
+            if (user is null)
+            {
+                user = new IdentityUser<Guid> { UserName = bootstrapEmail, Email = bootstrapEmail };
+                var result = await userManager.CreateAsync(user, bootstrapPassword);
+                if (result.Succeeded)
+                    await userManager.AddToRoleAsync(user, "admin");
+            }
+            else
+            {
+                // Account already exists (e.g. from before registration closed) — promote it, don't error.
+                await userManager.AddToRoleAsync(user, "admin");
+            }
+        }
+    }
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 app.UseForwardedHeaders();
+
+app.Use(async (context, next) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    await next();
+});
+
 app.UseHttpsRedirection();
 app.UseCors("Frontend");
 app.UseAuthentication();
