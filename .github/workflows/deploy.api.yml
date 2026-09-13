@@ -31,7 +31,7 @@ jobs:
           dotnet publish JobTracker.Api/JobTracker.Api.csproj
           -c Release
           /p:DeployOnBuild=true
-          /p:PublishProfile=JobTracker.Api/Properties/PublishProfiles/site90996-WebDeploy1.pubxml
+          /p:PublishProfile=JobTracker.Api/Properties/PublishProfiles/site90996-WebDeploy.pubxml
           /p:Username=${{ secrets.MONSTERASP_USERNAME }}
           /p:Password=${{ secrets.MONSTERASP_PASSWORD }}
           /p:AllowUntrustedCertificate=true
