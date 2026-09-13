@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "JobTracker.Api/**"
+      - "global.json"
 
 jobs:
   build-test-deploy:
@@ -15,10 +16,12 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "8.0.4x"
 
       - name: Verify .NET SDK
-        run: dotnet --info
+        run: |
+          dotnet --version
+          dotnet --info
 
       - name: Restore
         run: dotnet restore JobTracker.Api/JobTracker.Api.csproj
@@ -27,7 +30,7 @@ jobs:
         run: dotnet build JobTracker.Api/JobTracker.Api.csproj --no-restore -c Release
 
       - name: Test
-        run: dotnet test JobTracker.Api/JobTracker.Api.csproj --no-build -c Release
+        run: dotnet test JobTracker.Api.Tests/JobTracker.Api.Tests.csproj -c Release
 
       - name: Publish via Web Deploy
         run: >
