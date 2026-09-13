@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   DndContext,
   DragOverlay,
@@ -26,20 +26,46 @@ export function Dashboard() {
   const [activeId, setActiveId] = useState(null);
   const [openApplicationId, setOpenApplicationId] = useState(null);
 
+  const location = useLocation();
+  const navigate = useNavigate();
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
 
   useEffect(() => {
     let cancelled = false;
+    const pendingNew = location.state?.newApplication;
+
     listApplications()
-      .then((data) => { if (!cancelled) setApplications(data); })
+      .then((data) => {
+        if (cancelled) return;
+        // If the just-created application isn't in this GET's result yet
+        // (write-visibility lag from wherever it's coming from), show it
+        // anyway — we already know it exists, we made it a second ago.
+        if (pendingNew && !data.some((a) => a.id === pendingNew.id)) {
+          setApplications([pendingNew, ...data]);
+        } else {
+          setApplications(data);
+        }
+      })
       .catch((err) => {
         if (cancelled) return;
-        setLoadFailed(true);
-        notify.error('Could not load the board', extractErrorMessage(err));
+        if (pendingNew) {
+          // Even a failed refresh shouldn't hide an application we know exists.
+          setApplications([pendingNew]);
+        } else {
+          setLoadFailed(true);
+          notify.error('Could not load the board', extractErrorMessage(err));
+        }
       });
+
+    // Clear the navigation state once consumed so it doesn't re-apply on a
+    // later remount of this same history entry (e.g. browser back/forward).
+    if (pendingNew) navigate('.', { replace: true, state: null });
+
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const columns = view === 'active' ? ACTIVE_STATUSES : CLOSED_STATUSES;

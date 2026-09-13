@@ -18,7 +18,11 @@ export function NewApplication() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await notify.promise(createApplication({ title, company, jobUrl, rawDescription }), {
+      // Same promise instance handed to notify.promise (for the toast lifecycle)
+      // and awaited here (to get the resolved value) — a Promise can be
+      // awaited more than once safely, it's memoized after first settle.
+      const createPromise = createApplication({ title, company, jobUrl, rawDescription });
+      notify.promise(createPromise, {
         loading: 'Saving application…',
         success: (result) =>
           result.wasDuplicate
@@ -28,7 +32,12 @@ export function NewApplication() {
               : 'Application saved (skill automation not configured)',
         error: (err) => extractErrorMessage(err, 'Could not save this application'),
       });
-      navigate('/', { replace: true });
+
+      const result = await createPromise;
+      // Pass the just-created row through navigation state so the board
+      // shows it immediately, instead of depending on a GET request that
+      // may not yet reflect a write that was only just committed.
+      navigate('/', { replace: true, state: { newApplication: result.application } });
     } catch {
       // toast already shown by notify.promise
     } finally {
