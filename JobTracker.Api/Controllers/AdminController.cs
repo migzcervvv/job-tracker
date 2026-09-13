@@ -87,6 +87,7 @@ public class AdminController(
         {
             try
             {
+                //Changed to health instead of healthz
                 var client = httpFactory.CreateClient();
                 client.Timeout = TimeSpan.FromSeconds(5);
                 var res = await client.GetAsync($"{n8nBaseUrl.TrimEnd('/')}/health");
