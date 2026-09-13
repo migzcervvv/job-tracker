@@ -16,7 +16,6 @@ namespace JobTracker.Api.Controllers;
 public class ApplicationsController(AppDbContext db, 
     IHttpClientFactory httpClientFactory, 
     IConfiguration config, 
-    ILogger<ApplicationsController> logger,
     IServiceScopeFactory scopeFactory) : ControllerBase
 {
     private Guid CurrentUserId =>

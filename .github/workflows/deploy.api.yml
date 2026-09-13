@@ -1,4 +1,5 @@
 name: deploy-api
+
 on:
   push:
     branches: [main]
@@ -8,11 +9,13 @@ on:
 jobs:
   build-test-deploy:
     runs-on: windows-latest
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: "8.0.x" }
+        with:
+          dotnet-version: "8.0.x"
 
       - name: Restore
         run: dotnet restore JobTracker.Api/JobTracker.Api.csproj
@@ -21,7 +24,7 @@ jobs:
         run: dotnet build JobTracker.Api/JobTracker.Api.csproj --no-restore -c Release
 
       - name: Test
-        run: dotnet test --no-build -c Release
+        run: dotnet test JobTracker.Tests/JobTracker.Tests.csproj -c Release
 
       - name: Publish via Web Deploy
         run: >

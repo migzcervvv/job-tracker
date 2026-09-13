@@ -16,7 +16,7 @@ namespace JobTracker.Api.Controllers;
 [Authorize(Roles = "admin")]
 public class AdminController(
     AppDbContext db, UserManager<IdentityUser<Guid>> users, IConfiguration config,
-    IAppStartTime startTime, IHttpClientFactory httpFactory, ISkillResolver skillResolver) : ControllerBase
+    IAppStartTime startTime, IHttpClientFactory httpFactory) : ControllerBase
 {
     private readonly UserManager<IdentityUser<Guid>> _users = users;
 
