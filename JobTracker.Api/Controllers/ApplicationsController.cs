@@ -16,7 +16,8 @@ namespace JobTracker.Api.Controllers;
 public class ApplicationsController(AppDbContext db, 
     IHttpClientFactory httpClientFactory, 
     IConfiguration config, 
-    ILogger<ApplicationsController> logger) : ControllerBase
+    ILogger<ApplicationsController> logger,
+    IServiceScopeFactory scopeFactory) : ControllerBase
 {
     private Guid CurrentUserId =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -28,6 +29,18 @@ public class ApplicationsController(AppDbContext db,
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateApplicationRequest req)
     {
+        // Soft dedup: a near-identical submission within 60s reads as an
+        // accidental resubmit (e.g. a false-error retry), not a second
+        // real application. Return the existing row instead of creating one.
+        var recentCutoff = DateTimeOffset.UtcNow.AddSeconds(-60);
+        var duplicate = await db.Applications.FirstOrDefaultAsync(a =>
+            a.Title.ToLower() == req.Title.ToLower() &&
+            (a.Company ?? "").ToLower() == (req.Company ?? "").ToLower() &&
+            a.CreatedAt >= recentCutoff);
+
+        if (duplicate is not null)
+            return Ok(new { application = ToResponse(duplicate), wasDuplicate = true, automationTriggered = false });
+
         var app = new Application
         {
             Id = Guid.NewGuid(),
@@ -49,21 +62,76 @@ public class ApplicationsController(AppDbContext db,
         });
 
         await db.SaveChangesAsync();
-        try
+
+        var webhookUrl = config["N8n:SkillExtractionWebhookUrl"];
+        var automationTriggered = !string.IsNullOrEmpty(webhookUrl);
+
+        if (automationTriggered)
         {
-            var webhookUrl = config["N8n:SkillExtractionWebhookUrl"];
-            if (!string.IsNullOrEmpty(webhookUrl))
+            // Detached from the request entirely — this task keeps running
+            // after the HTTP response has already gone out. Its own DbContext
+            // scope is required because the request's `db` gets disposed
+            // the moment this action method returns.
+            var applicationId = app.Id;
+            var rawDescription = app.RawDescription;
+            _ = Task.Run(async () =>
             {
-                var client = httpClientFactory.CreateClient("n8n");
-                client.Timeout = TimeSpan.FromSeconds(5);
-                await client.PostAsJsonAsync(webhookUrl, new { applicationId = app.Id, rawDescription = app.RawDescription });
-            }
+                using var scope = scopeFactory.CreateScope();
+                var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
+                {
+                    Id = Guid.NewGuid(),
+                    Type = "skill_extraction",
+                    ApplicationId = applicationId,
+                    Status = "triggered",
+                });
+                await scopedDb.SaveChangesAsync();
+
+                try
+                {
+                    var client = httpClientFactory.CreateClient("n8n");
+                    client.Timeout = TimeSpan.FromSeconds(10);
+                    var res = await client.PostAsJsonAsync(webhookUrl,
+                        new { applicationId, rawDescription });
+
+                    scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
+                    {
+                        Id = Guid.NewGuid(),
+                        Type = "skill_extraction",
+                        ApplicationId = applicationId,
+                        Status = res.IsSuccessStatusCode ? "succeeded" : "failed",
+                        Message = res.IsSuccessStatusCode ? null : $"n8n responded HTTP {(int)res.StatusCode}",
+                    });
+                    await scopedDb.SaveChangesAsync();
+                }
+                catch (Exception ex)
+                {
+                    scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
+                    {
+                        Id = Guid.NewGuid(),
+                        Type = "skill_extraction",
+                        ApplicationId = applicationId,
+                        Status = "failed",
+                        Message = ex.Message,
+                    });
+                    await scopedDb.SaveChangesAsync();
+                }
+            });
         }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Skill extraction webhook failed for application {Id}", app.Id);
-        }
-        return CreatedAtAction(nameof(List), new { id = app.Id }, app);
+
+        return Ok(new { application = ToResponse(app), wasDuplicate = false, automationTriggered });
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
+        if (app is null) return NotFound();
+
+        db.Applications.Remove(app); // cascades StageDetails, TimelineEvents, ApplicationSkills
+        await db.SaveChangesAsync();
+        return NoContent();
     }
 
     [HttpPatch("{id}/status")]

@@ -23,6 +23,7 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
     public DbSet<ApplicationSkill> ApplicationSkills => Set<ApplicationSkill>();
     public DbSet<UserSkill> UserSkills => Set<UserSkill>();
     public DbSet<Resume> Resumes => Set<Resume>();
+    public DbSet<AutomationLogEntry> AutomationLogEntries => Set<AutomationLogEntry>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -56,5 +57,10 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
             .HasQueryFilter(x => _currentUserId == null || x.Application!.UserId == _currentUserId);
         builder.Entity<UserSkill>()
             .HasQueryFilter(x => _currentUserId == null || x.UserId == _currentUserId);
+        builder.Entity<Application>()
+            .HasMany<ApplicationSkill>()
+            .WithOne(x => x.Application!)
+            .HasForeignKey(x => x.ApplicationId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

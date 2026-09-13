@@ -33,5 +33,5 @@ public record ApplicationDetailResponse(
 public record UpsertStageDetailRequest(ApplicationStatus Stage, Dictionary<string, object?> Fields);
 public record StageDetailResponse(Guid Id, ApplicationStatus Stage, string FieldsJson, DateTimeOffset CreatedAt);
 public record SetSkillsRequest(List<string> SkillNames);
-public record SkillGapItem(string Name, int Frequency, bool IHaveIt);
+public record SkillGapItem(string Name, int Frequency, bool IHaveIt, int Trend); 
 public record SkillsGapResponse(List<SkillGapItem> Skills);

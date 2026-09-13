@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { STATUS, STATUS_META, statusMeta } from '../api/statusMeta.js';
-import { getApplication } from '../api/applications.js';
+import { getApplication, deleteApplication } from '../api/applications.js';
 import { getApplicationSkills, setApplicationSkills } from '../api/skills.js';
 import { relativeTime } from '../api/dates.js';
 import { eventLabel } from '../api/timelineMeta.js';
@@ -26,22 +26,26 @@ function parseFields(fieldsJson) {
   }
 }
 
-export function DetailModal({ application, onClose, onStatusChange }) {
+export function DetailModal({ application, onClose, onStatusChange, onDeleted }) {
   const [timeline, setTimeline] = useState(null);
   const [stageDetails, setStageDetails] = useState(null);
   const [requiredSkills, setRequiredSkills] = useState(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!application) {
       setTimeline(null);
       setStageDetails(null);
       setRequiredSkills(null);
+      setConfirmingDelete(false);
       return;
     }
     let cancelled = false;
     setTimeline(null);
     setStageDetails(null);
     setRequiredSkills(null);
+    setConfirmingDelete(false);
     getApplication(application.id)
       .then((data) => {
         if (cancelled) return;
@@ -77,6 +81,20 @@ export function DetailModal({ application, onClose, onStatusChange }) {
     });
   }
 
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await deleteApplication(application.id);
+      notify.success('Application deleted');
+      onDeleted(application.id);
+      onClose();
+    } catch (err) {
+      notify.error('Could not delete', extractErrorMessage(err));
+      setDeleting(false);
+      setConfirmingDelete(false);
+    }
+  }
+
   return (
     <AnimatePresence>
       {application && (
@@ -104,6 +122,28 @@ export function DetailModal({ application, onClose, onStatusChange }) {
               <button className="modal-close" onClick={onClose} aria-label="Close">
                 ✕
               </button>
+            </div>
+
+            <div className="modal-danger-row">
+              {confirmingDelete ? (
+                <>
+                  <span className="modal-danger-prompt">Delete this application permanently?</span>
+                  <button className="btn-danger" onClick={handleDelete} disabled={deleting}>
+                    {deleting ? 'Deleting…' : 'Confirm delete'}
+                  </button>
+                  <button
+                    className="icon-btn"
+                    onClick={() => setConfirmingDelete(false)}
+                    disabled={deleting}
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button className="icon-btn-danger" onClick={() => setConfirmingDelete(true)}>
+                  Delete application
+                </button>
+              )}
             </div>
 
             <div className="modal-body">

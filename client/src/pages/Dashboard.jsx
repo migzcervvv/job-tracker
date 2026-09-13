@@ -90,6 +90,10 @@ export function Dashboard() {
     moveApplication(active.id, over.id);
   }
 
+  function handleApplicationDeleted(applicationId) {
+    setApplications((prev) => prev.filter((a) => a.id !== applicationId));
+  }
+
   return (
     <Layout
       title="Board"
@@ -171,6 +175,7 @@ export function Dashboard() {
         application={openApplication}
         onClose={() => setOpenApplicationId(null)}
         onStatusChange={moveApplication}
+        onDeleted={handleApplicationDeleted}
       />
     </Layout>
   );

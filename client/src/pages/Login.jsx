@@ -1,20 +1,20 @@
-import { useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext.jsx";
-import { extractErrorMessage } from "../api/errors.js";
-import { notify } from "../notify.js";
+import { useState } from 'react';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext.jsx';
+import { extractErrorMessage } from '../api/errors.js';
+import { notify } from '../notify.js';
 
 export function Login() {
   const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   if (isAuthenticated) {
-    const dest = location.state?.from?.pathname || "/";
+    const dest = location.state?.from?.pathname || '/';
     return <Navigate to={dest} replace />;
   }
 
@@ -23,13 +23,10 @@ export function Login() {
     setSubmitting(true);
     try {
       await login(email, password);
-      notify.success("Signed in");
-      navigate("/", { replace: true });
+      notify.success('Signed in');
+      navigate('/', { replace: true });
     } catch (err) {
-      notify.error(
-        "Sign in failed",
-        extractErrorMessage(err, "Invalid email or password"),
-      );
+      notify.error('Sign in failed', extractErrorMessage(err, 'Invalid email or password'));
     } finally {
       setSubmitting(false);
     }
@@ -40,11 +37,6 @@ export function Login() {
       <div className="login-card">
         <div className="login-brand">
           job<span>.</span>tracker
-          {/* <img
-            src="/jt-logo.png"
-            alt="Job Tracker Logo"
-            className="login-logo"
-          /> */}
         </div>
         <p className="login-sub">Sign in to your pipeline.</p>
 
@@ -74,7 +66,7 @@ export function Login() {
           </div>
 
           <button className="btn-primary" type="submit" disabled={submitting}>
-            {submitting ? "Signing in…" : "Sign in"}
+            {submitting ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
 

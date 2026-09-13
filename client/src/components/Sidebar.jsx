@@ -5,10 +5,13 @@ const BASE_LINKS = [
   { to: '/', label: 'Board', end: true },
   { to: '/skills-gap', label: 'Skills gap' },
   { to: '/settings', label: 'Settings' },
+  { to: '/profile', label: 'Profile' },
 ];
 
 const ADMIN_LINKS = [
-  { to: '/admin/team', label: 'Team' },
+  { to: '/admin/users', label: 'Users' },
+  { to: '/admin/skills', label: 'Manage skills' },
+  { to: '/admin/health', label: 'System health' },
   { to: '/admin/automation', label: 'Automation log' },
 ];
 

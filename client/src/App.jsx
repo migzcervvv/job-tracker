@@ -8,7 +8,11 @@ import { Dashboard } from './pages/Dashboard.jsx';
 import { NewApplication } from './pages/NewApplication.jsx';
 import { SkillsGap } from './pages/SkillsGap.jsx';
 import { Settings } from './pages/Settings.jsx';
-import { Placeholder } from './pages/Placeholder.jsx';
+import { Profile } from './pages/Profile.jsx';
+import { AdminUsers } from './pages/admin/AdminUsers.jsx';
+import { AdminSkills } from './pages/admin/AdminSkills.jsx';
+import { AdminHealth } from './pages/admin/AdminHealth.jsx';
+import { AdminAutomationLog } from './pages/admin/AdminAutomationLog.jsx';
 
 export default function App() {
   return (
@@ -24,26 +28,13 @@ export default function App() {
             <Route path="/applications/new" element={<NewApplication />} />
             <Route path="/skills-gap" element={<SkillsGap />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/profile" element={<Profile />} />
 
             <Route element={<AdminRoute />}>
-              <Route
-                path="/admin/team"
-                element={
-                  <Placeholder
-                    title="Team"
-                    note="Registered users on this instance. Admin-only."
-                  />
-                }
-              />
-              <Route
-                path="/admin/automation"
-                element={
-                  <Placeholder
-                    title="Automation log"
-                    note="Recent n8n webhook activity: skill extraction, email match proposals, digests. Admin-only."
-                  />
-                }
-              />
+              <Route path="/admin/users" element={<AdminUsers />} />
+              <Route path="/admin/skills" element={<AdminSkills />} />
+              <Route path="/admin/health" element={<AdminHealth />} />
+              <Route path="/admin/automation" element={<AdminAutomationLog />} />
             </Route>
           </Route>
 

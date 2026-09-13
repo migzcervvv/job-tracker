@@ -5,6 +5,9 @@ export async function listApplications() {
   return data;
 }
 
+// Response shape changed: { application, wasDuplicate, automationTriggered }
+// — the API now detects accidental resubmits and returns the existing row
+// instead of erroring, and reports whether skill extraction was fired.
 export async function createApplication({ title, company, jobUrl, rawDescription }) {
   const { data } = await api.post('/api/applications', {
     title,
@@ -28,4 +31,8 @@ export async function getApplication(id) {
 export async function upsertStageDetail(id, stage, fields) {
   const { data } = await api.put(`/api/applications/${id}/stage-details`, { stage, fields });
   return data;
+}
+
+export async function deleteApplication(id) {
+  await api.delete(`/api/applications/${id}`);
 }

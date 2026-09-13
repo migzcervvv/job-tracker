@@ -20,7 +20,12 @@ export function NewApplication() {
     try {
       await notify.promise(createApplication({ title, company, jobUrl, rawDescription }), {
         loading: 'Saving application…',
-        success: 'Application saved',
+        success: (result) =>
+          result.wasDuplicate
+            ? 'Looks like you just added this — showing the existing entry'
+            : result.automationTriggered
+              ? 'Application saved'
+              : 'Application saved (skill automation not configured)',
         error: (err) => extractErrorMessage(err, 'Could not save this application'),
       });
       navigate('/', { replace: true });
@@ -83,7 +88,7 @@ export function NewApplication() {
             }}
           />
           <div className="field-hint">
-            Paste the full posting. Skill extraction runs against this once n8n is wired up.
+            Paste the full posting. Skills are extracted automatically within a few seconds.
           </div>
         </div>
 

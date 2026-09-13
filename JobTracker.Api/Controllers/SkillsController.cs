@@ -98,31 +98,46 @@ public class SkillsController(AppDbContext db) : ControllerBase
     public async Task<IActionResult> GetSkillsGap()
     {
         var userId = CurrentUserId;
-        var totalApps = await db.Applications.CountAsync();
-        if (totalApps == 0) return Ok(new SkillsGapResponse(new()));
+        var allApps = await db.Applications.Select(a => new { a.Id, a.AppliedDate }).ToListAsync();
+        if (allApps.Count == 0) return Ok(new SkillsGapResponse(new()));
 
-        var mySkillIds = await db.UserSkills
-            .Where(us => us.UserId == userId)
-            .Select(us => us.SkillId)
-            .ToListAsync();
+        var sortedByDate = allApps.OrderBy(a => a.AppliedDate).ToList();
+        var midpoint = sortedByDate.Count / 2;
+        var olderIds = sortedByDate.Take(midpoint).Select(a => a.Id).ToHashSet();
+        var recentIds = sortedByDate.Skip(midpoint).Select(a => a.Id).ToHashSet();
+        var recentTotal = Math.Max(recentIds.Count, 1);
+        var olderTotal = Math.Max(olderIds.Count, 1);
 
-        var gap = await db.ApplicationSkills
+        var mySkillIds = await db.UserSkills.Where(us => us.UserId == userId).Select(us => us.SkillId).ToListAsync();
+        var allLinks = await db.ApplicationSkills.ToListAsync();
+
+        var gap = allLinks
             .GroupBy(x => x.SkillId)
-            .Select(g => new { SkillId = g.Key, Count = g.Count() })
+            .Select(g => new
+            {
+                SkillId = g.Key,
+                Count = g.Count(),
+                RecentCount = g.Count(x => recentIds.Contains(x.ApplicationId)),
+                OlderCount = g.Count(x => olderIds.Contains(x.ApplicationId)),
+            })
             .OrderByDescending(g => g.Count)
             .Take(15)
-            .ToListAsync();
+            .ToList();
 
         var skillIds = gap.Select(g => g.SkillId).ToList();
-        var skillNames = await db.Skills
-            .Where(s => skillIds.Contains(s.Id))
-            .ToDictionaryAsync(s => s.Id, s => s.Name);
+        var skillNames = await db.Skills.Where(s => skillIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name);
 
-        var items = gap.Select(g => new SkillGapItem(
-            skillNames.GetValueOrDefault(g.SkillId, "unknown"),
-            (int)Math.Round(100.0 * g.Count / totalApps),
-            mySkillIds.Contains(g.SkillId)
-        )).ToList();
+        var items = gap.Select(g =>
+        {
+            var recentFreq = 100.0 * g.RecentCount / recentTotal;
+            var olderFreq = 100.0 * g.OlderCount / olderTotal;
+            return new SkillGapItem(
+                skillNames.GetValueOrDefault(g.SkillId, "unknown"),
+                (int)Math.Round(100.0 * g.Count / allApps.Count),
+                mySkillIds.Contains(g.SkillId),
+                (int)Math.Round(recentFreq - olderFreq)
+            );
+        }).ToList();
 
         return Ok(new SkillsGapResponse(items));
     }
