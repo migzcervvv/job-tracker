@@ -45,7 +45,7 @@ public class InternalController(AppDbContext db, IConfiguration config, ISkillRe
         resume.ExtractionStatus = "succeeded";
         await db.SaveChangesAsync();
 
-        return Ok();
+        return Ok(new { resume.Id, skillCount = req.SkillNames?.Count ?? 0, extractedTextLength = req.ExtractedText?.Length ?? 0 });
     }
 
     public record ResumeExtractionRequest(string ExtractedText, List<string> SkillNames);
