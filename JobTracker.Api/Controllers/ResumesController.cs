@@ -57,13 +57,15 @@ public class ResumesController(AppDbContext db,
             SizeBytes = file.Length,
         };
         db.Resumes.Add(resume);
+        await db.SaveChangesAsync();
 
-        // ResumesController.cs — inside Upload(), after saving the Resume row
+        // ---- webhook trigger starts here — everything above this line is Phase 2, unchanged ----
         var webhookUrl = config["N8n:ResumeExtractionWebhookUrl"];
         if (!string.IsNullOrEmpty(webhookUrl))
         {
             var resumeId = resume.Id;
             var storagePath = resume.StoragePath;
+
             _ = Task.Run(async () =>
             {
                 using var scope = scopeFactory.CreateScope();
@@ -84,7 +86,7 @@ public class ResumesController(AppDbContext db,
                 {
                     var signedUrl = await scopedStorage.CreateSignedUrlAsync(storagePath, expiresInSeconds: 600);
                     var client = httpClientFactory.CreateClient("n8n");
-                    client.Timeout = TimeSpan.FromSeconds(30); // file download + parse + LLM call all happen inside this one workflow run
+                    client.Timeout = TimeSpan.FromSeconds(30);
                     var res = await client.PostAsJsonAsync(webhookUrl, new { resumeId, downloadUrl = signedUrl });
 
                     scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
@@ -112,8 +114,9 @@ public class ResumesController(AppDbContext db,
             });
 
             resume.ExtractionStatus = "triggered";
+            await db.SaveChangesAsync();
         }
-        await db.SaveChangesAsync();
+        // ---- webhook trigger ends here ----
 
         return Ok(new { resume.Id, resume.FileName, resume.ContentType, resume.SizeBytes, resume.CreatedAt });
     }
