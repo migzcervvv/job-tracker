@@ -31,4 +31,22 @@ public class InternalController(AppDbContext db, IConfiguration config, ISkillRe
         await db.SaveChangesAsync();
         return Ok(skills.Select(s => s.Name));
     }
+    // InternalController.cs — new action
+    [HttpPut("resumes/{id}/extraction")]
+    public async Task<IActionResult> SetResumeExtraction(Guid id, [FromBody] ResumeExtractionRequest req)
+    {
+        if (!IsAuthorized()) return Unauthorized();
+
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        if (resume is null) return NotFound();
+
+        resume.ExtractedText = req.ExtractedText;
+        resume.ProposedSkillsJson = System.Text.Json.JsonSerializer.Serialize(req.SkillNames);
+        resume.ExtractionStatus = "succeeded";
+        await db.SaveChangesAsync();
+
+        return Ok();
+    }
+
+    public record ResumeExtractionRequest(string ExtractedText, List<string> SkillNames);
 }

@@ -21,9 +21,42 @@ public class ApplicationsController(AppDbContext db,
     private Guid CurrentUserId =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
+    public record ApplicationResponse(
+        Guid Id, string Title, string Company, string? JobUrl, string RawDescription,
+        ApplicationStatus Status, DateTimeOffset AppliedDate, DateTimeOffset UpdatedAt,
+        int? FitPercentage // null when the application has no required skills tagged yet
+    );
+
     [HttpGet]
-    public async Task<IActionResult> List() =>
-        Ok(await db.Applications.ToListAsync());   // query filter scopes this automatically
+    public async Task<IActionResult> List()
+    {
+        var mySkillIds = (await db.UserSkills
+            .Where(us => us.UserId == CurrentUserId)
+            .Select(us => us.SkillId)
+            .ToListAsync())
+            .ToHashSet();
+
+        var apps = await db.Applications.ToListAsync();
+        var appIds = apps.Select(a => a.Id).ToList();
+
+        var allLinks = await db.ApplicationSkills
+            .Where(x => appIds.Contains(x.ApplicationId))
+            .ToListAsync();
+        var linksByApp = allLinks.GroupBy(l => l.ApplicationId).ToDictionary(g => g.Key, g => g.Select(l => l.SkillId).ToList());
+
+        var result = apps.Select(a =>
+        {
+            var required = linksByApp.GetValueOrDefault(a.Id, new List<Guid>());
+            int? fit = required.Count > 0
+                ? (int)Math.Round(100.0 * required.Count(id => mySkillIds.Contains(id)) / required.Count)
+                : null;
+
+            return new ApplicationResponse(a.Id, a.Title, a.Company, a.JobUrl, a.RawDescription,
+                a.Status, a.AppliedDate, a.UpdatedAt, fit);
+        });
+
+        return Ok(result);
+    }
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateApplicationRequest req)
@@ -164,8 +197,8 @@ public class ApplicationsController(AppDbContext db,
         return Ok(ToResponse(app));
     }
 
-    private static ApplicationResponse ToResponse(Application a) => new(
-        a.Id, a.Title, a.Company, a.JobUrl, a.RawDescription, a.Status, a.AppliedDate, a.UpdatedAt
+    private static ApplicationResponse ToResponse(Application a, int? fitPercentage = null) => new(
+        a.Id, a.Title, a.Company, a.JobUrl, a.RawDescription, a.Status, a.AppliedDate, a.UpdatedAt, fitPercentage
     );
 
     [HttpGet("{id}")]
@@ -177,6 +210,13 @@ public class ApplicationsController(AppDbContext db,
             .FirstOrDefaultAsync(a => a.Id == id);
 
         if (app is null) return NotFound();
+
+        var requiredSkillIds = await db.ApplicationSkills.Where(x => x.ApplicationId == id).Select(x => x.SkillId).ToListAsync();
+        var mySkillIds = (await db.UserSkills.Where(us => us.UserId == CurrentUserId).Select(us => us.SkillId).ToListAsync()).ToHashSet();
+        int? fitPercentage = requiredSkillIds.Count > 0
+            ? (int)Math.Round(100.0 * requiredSkillIds.Count(id => mySkillIds.Contains(id)) / requiredSkillIds.Count)
+            : null;
+
 
         var response = new ApplicationDetailResponse(
             app.Id, app.Title, app.Company, app.JobUrl, app.RawDescription,
