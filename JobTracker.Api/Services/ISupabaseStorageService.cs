@@ -42,7 +42,13 @@ public class SupabaseStorageService : ISupabaseStorageService
 
     public async Task DeleteAsync(string path)
     {
-        var res = await _http.DeleteAsync($"/storage/v1/object/{Bucket}/{path}");
-        res.EnsureSuccessStatusCode();
+        var request = new HttpRequestMessage(HttpMethod.Delete, $"/storage/v1/object/{Bucket}")
+        {
+            Content = JsonContent.Create(new { prefixes = new[] { path } })
+        };
+
+        var res = await _http.SendAsync(request);
+        if (!res.IsSuccessStatusCode && res.StatusCode != System.Net.HttpStatusCode.NotFound)
+            res.EnsureSuccessStatusCode();
     }
 }

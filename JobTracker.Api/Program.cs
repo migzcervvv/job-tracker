@@ -137,8 +137,23 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-app.UseForwardedHeaders();
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine(ex);
+        context.Response.StatusCode = 500;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(
+            System.Text.Json.JsonSerializer.Serialize(new { error = "Internal server error" }));
+    }
+});
 
+app.UseForwardedHeaders();
 app.Use(async (context, next) =>
 {
     context.Response.Headers.CacheControl = "no-store";
