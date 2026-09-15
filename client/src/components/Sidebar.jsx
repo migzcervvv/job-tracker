@@ -1,18 +1,18 @@
-import { NavLink } from 'react-router-dom';
-import { useAuth } from '../auth/AuthContext.jsx';
+import { NavLink } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext.jsx";
 
 const BASE_LINKS = [
-  { to: '/', label: 'Board', end: true },
-  { to: '/skills-gap', label: 'Skills gap' },
-  { to: '/settings', label: 'Settings' },
-  { to: '/profile', label: 'Profile' },
+  { to: "/", label: "Board", end: true },
+  { to: "/skills-gap", label: "Skills gap" },
+  { to: "/settings", label: "Resume & skills" },
+  { to: "/profile", label: "Profile" },
 ];
 
 const ADMIN_LINKS = [
-  { to: '/admin/users', label: 'Users' },
-  { to: '/admin/skills', label: 'Manage skills' },
-  { to: '/admin/health', label: 'System health' },
-  { to: '/admin/automation', label: 'Automation log' },
+  { to: "/admin/users", label: "Users" },
+  { to: "/admin/skills", label: "Manage skills" },
+  { to: "/admin/health", label: "System health" },
+  { to: "/admin/automation", label: "Automation log" },
 ];
 
 export function Sidebar() {
@@ -30,7 +30,7 @@ export function Sidebar() {
           key={link.to}
           to={link.to}
           end={link.end}
-          className={({ isActive }) => `rail-link${isActive ? ' active' : ''}`}
+          className={({ isActive }) => `rail-link${isActive ? " active" : ""}`}
         >
           <span className="dot" />
           {link.label}
@@ -44,7 +44,9 @@ export function Sidebar() {
             <NavLink
               key={link.to}
               to={link.to}
-              className={({ isActive }) => `rail-link${isActive ? ' active' : ''}`}
+              className={({ isActive }) =>
+                `rail-link${isActive ? " active" : ""}`
+              }
             >
               <span className="dot" />
               {link.label}
@@ -55,12 +57,12 @@ export function Sidebar() {
 
       <div className="rail-foot">
         <div style={{ marginBottom: 8, fontSize: 13 }}>{user?.email}</div>
-        <span className={`role-badge${isAdmin ? ' admin' : ''}`}>
-          {isAdmin ? 'Admin' : 'User'}
+        <span className={`role-badge${isAdmin ? " admin" : ""}`}>
+          {isAdmin ? "Admin" : "User"}
         </span>
         <button
           className="icon-btn"
-          style={{ display: 'block', marginTop: 12, width: '100%' }}
+          style={{ display: "block", marginTop: 12, width: "100%" }}
           onClick={logout}
         >
           Sign out

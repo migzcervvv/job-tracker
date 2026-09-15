@@ -1,15 +1,15 @@
-import { api } from './client.js';
+import { api } from "./client.js";
 
 export async function listResumes() {
-  const { data } = await api.get('/api/resumes');
+  const { data } = await api.get("/api/resumes");
   return data;
 }
 
 export async function uploadResume(file) {
   const form = new FormData();
-  form.append('file', file);
-  const { data } = await api.post('/api/resumes', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+  form.append("file", file);
+  const { data } = await api.post("/api/resumes", form, {
+    headers: { "Content-Type": "multipart/form-data" },
   });
   return data;
 }
@@ -21,4 +21,9 @@ export async function getResumeDownloadUrl(id) {
 
 export async function deleteResume(id) {
   await api.delete(`/api/resumes/${id}`);
+}
+
+export async function getResumeAutomationStatus(id) {
+  const { data } = await api.get(`/api/resumes/${id}/automation-status`);
+  return data;
 }
