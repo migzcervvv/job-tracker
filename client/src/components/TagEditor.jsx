@@ -7,6 +7,10 @@ export function TagEditor({ initialSkills, onSave, saveLabel = 'Save skills' }) 
   const [inputValue, setInputValue] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Display order only — sorting a copy so add/remove (which match by
+  // exact name) stay unaffected by render order.
+  const sorted = [...draft].sort((a, b) => a.localeCompare(b));
+
   function addFromInput() {
     const name = inputValue.trim();
     if (!name) return;
@@ -44,8 +48,8 @@ export function TagEditor({ initialSkills, onSave, saveLabel = 'Save skills' }) 
   return (
     <div className="tag-editor">
       <div className="tag-list">
-        {draft.length === 0 && <span className="tag-empty">No skills added yet.</span>}
-        {draft.map((skill) => (
+        {sorted.length === 0 && <span className="tag-empty">No skills added yet.</span>}
+        {sorted.map((skill) => (
           <span className="tag-chip" key={skill}>
             {skill}
             <button type="button" onClick={() => removeSkill(skill)} aria-label={`Remove ${skill}`}>

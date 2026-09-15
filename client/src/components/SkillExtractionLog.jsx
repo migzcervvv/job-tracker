@@ -4,17 +4,12 @@ import {
   confirmResumeSkills,
   dismissResumeSkills,
 } from "../api/resumes.js";
+import { EXTRACTION_STATUS_META } from "../api/extractionStatusMeta.js";
 import { relativeTime } from "../api/dates.js";
 import { extractErrorMessage } from "../api/errors.js";
 import { notify } from "../notify.js";
 
 const POLL_INTERVAL_MS = 4000;
-
-const STATUS_META = {
-  triggered: { color: "var(--s-pending)", label: "Extracting…" },
-  succeeded: { color: "var(--s-interview)", label: "Extracted" },
-  failed: { color: "#e07a6f", label: "Failed" },
-};
 
 // Non-blocking: this never covers the page. It's a list the user can
 // ignore, come back to, or act on whenever — that's the whole point.
@@ -37,7 +32,8 @@ export function SkillExtractionLog({ resumes, onRefresh, onSkillsAdded }) {
   if (entries.length === 0) return null;
 
   return (
-    <div className="extraction-log" style={{ marginTop: 4 }}>
+    <div className="extraction-log">
+      <div className="extraction-log-head">Extraction activity</div>
       {entries.map((r) => (
         <ExtractionLogRow
           key={r.id}
@@ -56,7 +52,7 @@ function ExtractionLogRow({ resume, onSkillsAdded, onReviewed }) {
   const [checked, setChecked] = useState({});
   const [busy, setBusy] = useState(false);
 
-  const meta = STATUS_META[resume.extractionStatus] ?? {
+  const meta = EXTRACTION_STATUS_META[resume.extractionStatus] ?? {
     color: "var(--text-dim)",
     label: resume.extractionStatus,
   };
@@ -67,7 +63,9 @@ function ExtractionLogRow({ resume, onSkillsAdded, onReviewed }) {
     setReviewing(true);
     getProposedSkills(resume.id)
       .then((data) => {
-        const proposedSkills = data.proposedSkills ?? [];
+        const proposedSkills = [...(data.proposedSkills ?? [])].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        );
         setProposed(proposedSkills);
         setChecked(
           Object.fromEntries(
@@ -122,20 +120,21 @@ function ExtractionLogRow({ resume, onSkillsAdded, onReviewed }) {
 
   return (
     <div className="extraction-log-row">
+      <span className="extraction-log-dot" style={{ background: meta.color }} />
+      <div className="extraction-log-main">
+        <span className="extraction-log-name">{resume.fileName}</span>
+        <span
+          className="extraction-log-time"
+          title={new Date(resume.createdAt).toLocaleString()}
+        >
+          {relativeTime(resume.createdAt)}
+        </span>
+      </div>
       <span
-        className="log-time"
-        title={new Date(resume.createdAt).toLocaleString()}
-      >
-        {relativeTime(resume.createdAt)}
-      </span>
-      <span
-        className="log-badge"
+        className="extraction-log-badge"
         style={{ color: meta.color, borderColor: meta.color }}
       >
         {meta.label}
-      </span>
-      <span className="log-message" style={{ flex: 1 }}>
-        {resume.fileName}
       </span>
 
       {needsReview && !reviewing && (
@@ -167,7 +166,7 @@ function ExtractionLogRow({ resume, onSkillsAdded, onReviewed }) {
                 />
                 {s.name}
                 {s.alreadyClaimed && (
-                  <span style={{ color: "var(--text-dim)", fontSize: 11 }}>
+                  <span style={{ color: "var(--text-dim)", fontSize: 11, textTransform: "none" }}>
                     &nbsp;(already have this)
                   </span>
                 )}

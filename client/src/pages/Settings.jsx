@@ -2,17 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { Layout } from "../components/Layout.jsx";
 import { TagEditor } from "../components/TagEditor.jsx";
 import { ResumeUpload } from "../components/ResumeUpload.jsx";
+import { ResumeCard } from "../components/ResumeCard.jsx";
 import { ResumePreviewModal } from "../components/ResumePreviewModal.jsx";
 import { SkillExtractionLog } from "../components/SkillExtractionLog.jsx";
 import { getMySkills, setMySkills } from "../api/skills.js";
-import {
-  listResumes,
-  getResumeDownloadUrl,
-  deleteResume,
-} from "../api/resumes.js";
+import { listResumes, getResumeDownloadUrl, deleteResume } from "../api/resumes.js";
 import { extractErrorMessage } from "../api/errors.js";
-import { formatBytes } from "../api/format.js";
-import { relativeTime } from "../api/dates.js";
 import { notify } from "../notify.js";
 
 export function Settings() {
@@ -71,66 +66,64 @@ export function Settings() {
 
   return (
     <Layout title="Resume & skills">
-      <div className="section-label">My skills</div>
-      <p
-        style={{
-          color: "var(--text-dim)",
-          fontSize: 13,
-          marginTop: 0,
-          marginBottom: 12,
-        }}
-      >
-        Add manually below. Skills extracted from an uploaded resume show up
-        here to review and confirm once n8n finishes — no need to wait on this
-        page for it.
-      </p>
-      {skills === null ? (
-        <p style={{ color: "var(--text-dim)" }}>Loading…</p>
-      ) : (
-        <TagEditor
-          key={skillsVersion}
-          initialSkills={skills}
-          onSave={setMySkills}
-          saveLabel="Save skills"
-        />
-      )}
-
-      <SkillExtractionLog
-        resumes={resumes}
-        onRefresh={refreshResumes}
-        onSkillsAdded={refreshSkills}
-      />
-
-      <div className="section-label" style={{ marginTop: 28 }}>
-        Resumes
-      </div>
-      <div style={{ marginBottom: 16 }}>
-        <ResumeUpload onUploaded={refreshResumes} />
-      </div>
-
-      {resumes === null && <p style={{ color: "var(--text-dim)" }}>Loading…</p>}
-      {resumes !== null && resumes.length === 0 && (
-        <p style={{ color: "var(--text-dim)", fontSize: 13 }}>
-          No resumes uploaded yet.
-        </p>
-      )}
-      {resumes !== null && resumes.length > 0 && (
-        <div className="resume-list">
-          {resumes.map((r) => (
-            <div className="resume-row" key={r.id}>
-              <span className="name">{r.fileName}</span>
-              <span className="size">
-                {formatBytes(r.sizeBytes)} · {relativeTime(r.createdAt)}
-              </span>
-              <div className="row-actions">
-                <button onClick={() => setPreviewing(r)}>Preview</button>
-                <button onClick={() => handleDownload(r.id)}>Download</button>
-                <button onClick={() => handleDelete(r.id)}>Delete</button>
-              </div>
-            </div>
-          ))}
+      <section className="page-section" id="resumes">
+        <div className="page-section-head">
+          <div>
+            <h2>Resumes</h2>
+            <p className="page-section-sub">
+              Upload a resume and skills extract in the background — no need
+              to wait here for it.
+            </p>
+          </div>
+          <span className="page-count">{resumes?.length ?? 0}</span>
         </div>
-      )}
+
+        {resumes === null ? (
+          <p style={{ color: "var(--text-dim)" }}>Loading…</p>
+        ) : (
+          <div className="resume-rack">
+            <ResumeUpload onUploaded={refreshResumes} />
+            {resumes.map((r) => (
+              <ResumeCard
+                key={r.id}
+                resume={r}
+                onPreview={setPreviewing}
+                onDownload={handleDownload}
+                onDelete={handleDelete}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="page-section" id="skills">
+        <div className="page-section-head">
+          <div>
+            <h2>My skills</h2>
+            <p className="page-section-sub">
+              Add manually, or confirm what was found in a resume below.
+            </p>
+          </div>
+          <span className="page-count">{skills?.length ?? 0}</span>
+        </div>
+
+        {skills === null ? (
+          <p style={{ color: "var(--text-dim)" }}>Loading…</p>
+        ) : (
+          <TagEditor
+            key={skillsVersion}
+            initialSkills={skills}
+            onSave={setMySkills}
+            saveLabel="Save skills"
+          />
+        )}
+
+        <SkillExtractionLog
+          resumes={resumes}
+          onRefresh={refreshResumes}
+          onSkillsAdded={refreshSkills}
+        />
+      </section>
 
       <ResumePreviewModal
         resume={previewing}

@@ -24,6 +24,12 @@ export async function deleteResume(id) {
   await api.delete(`/api/resumes/${id}`);
 }
 
+// Replaces the old (broken) getResumeAutomationStatus — that polled
+// /api/resumes/{id}/automation-status, which was never a real route on
+// this controller (it only exists on ApplicationsController, for a
+// different resource). Every poll 404'd, which is what made the app
+// "lose track" of n8n. This is the endpoint that was actually built to
+// answer this question.
 export async function getProposedSkills(id) {
   const { data } = await api.get(`/api/resumes/${id}/proposed-skills`);
   return data;

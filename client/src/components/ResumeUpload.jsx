@@ -5,9 +5,9 @@ import { notify } from "../notify.js";
 
 const ACCEPTED = ".pdf,.doc,.docx";
 
-// Upload only. Does not wait on n8n and does not block the page — the
-// resume list shows "Extracting…" immediately, and My skills below picks
-// up the result once it's in, via SkillExtractionLog's own polling.
+// Upload only — no waiting on n8n here. It sits as the first tile in the
+// resume rack, so adding a resume reads as "add another document" rather
+// than a separate, disconnected form.
 export function ResumeUpload({ onUploaded }) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
@@ -32,8 +32,15 @@ export function ResumeUpload({ onUploaded }) {
   }
 
   return (
-    <div
-      className="upload-drop"
+    <label
+      htmlFor="resume-upload"
+      className={[
+        "resume-upload-tile",
+        dragOver && "is-drag-over",
+        uploading && "is-uploading",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       onDragOver={(e) => {
         e.preventDefault();
         setDragOver(true);
@@ -44,11 +51,6 @@ export function ResumeUpload({ onUploaded }) {
         setDragOver(false);
         handleFile(e.dataTransfer.files?.[0]);
       }}
-      style={
-        dragOver
-          ? { borderColor: "var(--accent)", color: "var(--text)" }
-          : undefined
-      }
     >
       <input
         ref={inputRef}
@@ -58,14 +60,13 @@ export function ResumeUpload({ onUploaded }) {
         disabled={uploading}
         onChange={(e) => handleFile(e.target.files?.[0])}
       />
-      {uploading ? (
-        "Uploading…"
-      ) : (
-        <>
-          Drag a resume here to upload, or{" "}
-          <label htmlFor="resume-upload">browse</label>
-        </>
-      )}
-    </div>
+      <span className="resume-upload-mark" aria-hidden="true">
+        {uploading ? "…" : "+"}
+      </span>
+      <span className="resume-upload-label">
+        {uploading ? "Uploading" : "Add resume"}
+      </span>
+      <span className="resume-upload-hint">PDF, DOC, or DOCX · drag or browse</span>
+    </label>
   );
 }
