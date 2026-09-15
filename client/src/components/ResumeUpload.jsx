@@ -10,10 +10,18 @@ const POLL_INTERVAL_MS = 3000;
 // giving up on polling.
 const MAX_ATTEMPTS = 20;
 
-export function ResumeUpload({ onUploaded, onSkillsExtracted }) {
+// phase: 'idle' | 'uploading' | 'extracting' | 'confirm' | 'failed' | 'timeout'
+// While phase !== 'idle' a full-screen modal blocks the page — the user
+// can't do anything else until they confirm/skip the extracted skills or
+// close an error, per the "pause the site and wait" requirement.
+export function ResumeUpload({ onUploaded, onConfirmSkills }) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
-  const [automationStatus, setAutomationStatus] = useState(null);
+  const [phase, setPhase] = useState("idle");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [skillNames, setSkillNames] = useState([]);
+  const [checked, setChecked] = useState({});
+  const [confirming, setConfirming] = useState(false);
   const pollIntervalRef = useRef(null);
 
   useEffect(() => {
@@ -22,38 +30,49 @@ export function ResumeUpload({ onUploaded, onSkillsExtracted }) {
     };
   }, []);
 
-  function pollExtraction(resumeId) {
-    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+  function stopPolling() {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }
+
+  function startPolling(resumeId) {
+    stopPolling();
     let attempts = 0;
-    let skillsRefetched = false;
 
     function poll() {
       getResumeAutomationStatus(resumeId)
         .then((data) => {
-          setAutomationStatus(data);
           attempts += 1;
 
-          if (data.status === "succeeded" && !skillsRefetched) {
-            skillsRefetched = true;
-            onSkillsExtracted?.();
-            notify.success("Skills added from your resume");
+          if (data.status === "succeeded") {
+            stopPolling();
+            const names = data.skillNames ?? [];
+            setSkillNames(names);
+            setChecked(Object.fromEntries(names.map((n) => [n, true])));
+            setPhase("confirm");
+            return;
           }
 
           if (data.status === "failed") {
-            notify.error(
-              "Skill extraction failed",
-              data.message || "You can still add skills manually above.",
-            );
+            stopPolling();
+            setErrorMessage(data.message || "Extraction failed.");
+            setPhase("failed");
+            return;
           }
 
-          if (data.status !== "triggered" || attempts >= MAX_ATTEMPTS) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
+          if (attempts >= MAX_ATTEMPTS) {
+            stopPolling();
+            setPhase("timeout");
           }
         })
-        .catch(() => {
-          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
+        .catch((err) => {
+          stopPolling();
+          setErrorMessage(
+            extractErrorMessage(err, "Lost track of extraction status."),
+          );
+          setPhase("failed");
         });
     }
 
@@ -63,23 +82,47 @@ export function ResumeUpload({ onUploaded, onSkillsExtracted }) {
 
   async function handleFile(file) {
     if (!file) return;
-    setAutomationStatus(null);
+    setErrorMessage("");
+    setPhase("uploading");
     try {
-      const resume = await notify.promise(uploadResume(file), {
-        loading: "Uploading resume…",
-        success: "Resume uploaded — extracting skills…",
-        error: (err) => extractErrorMessage(err, "Could not upload this file"),
-      });
-      // Refetch from the list endpoint rather than trusting this response's
-      // shape for every field (e.g. sizeBytes) — avoids stale/partial data.
-      onUploaded();
-      if (resume?.id) pollExtraction(resume.id);
-    } catch {
-      // toast already shown
+      const resume = await uploadResume(file);
+      onUploaded?.();
+      setPhase("extracting");
+      startPolling(resume.id);
+    } catch (err) {
+      setErrorMessage(extractErrorMessage(err, "Could not upload this file"));
+      setPhase("failed");
     } finally {
       if (inputRef.current) inputRef.current.value = "";
     }
   }
+
+  function toggleSkill(name) {
+    setChecked((prev) => ({ ...prev, [name]: !prev[name] }));
+  }
+
+  async function handleConfirm() {
+    const selected = skillNames.filter((n) => checked[n]);
+    setConfirming(true);
+    try {
+      await onConfirmSkills?.(selected);
+      close();
+    } catch (err) {
+      notify.error("Could not save skills", extractErrorMessage(err));
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  function close() {
+    setPhase("idle");
+    setSkillNames([]);
+    setChecked({});
+    setErrorMessage("");
+  }
+
+  const blocking = phase !== "idle";
+  const selectedCount = skillNames.filter((n) => checked[n]).length;
 
   return (
     <>
@@ -108,39 +151,121 @@ export function ResumeUpload({ onUploaded, onSkillsExtracted }) {
           accept={ACCEPTED}
           onChange={(e) => handleFile(e.target.files?.[0])}
         />
-        Drag a PDF or Word doc here, or{" "}
+        Drag a resume here to auto-extract skills, or{" "}
         <label htmlFor="resume-upload">browse</label>
       </div>
-      <AutomationStatusBanner automationStatus={automationStatus} />
+
+      {blocking && (
+        <div className="modal-backdrop">
+          <div className="modal-panel resume-modal-panel">
+            {(phase === "uploading" || phase === "extracting") && (
+              <>
+                <div className="resume-modal-spinner" />
+                <div className="resume-modal-title">
+                  {phase === "uploading"
+                    ? "Uploading resume…"
+                    : "Extracting skills…"}
+                </div>
+                <div className="resume-modal-sub">
+                  {phase === "uploading"
+                    ? "Sending your file to the server."
+                    : "n8n is reading your resume — this can take up to a minute."}
+                </div>
+              </>
+            )}
+
+            {phase === "confirm" && (
+              <div className="resume-modal-content-left">
+                <div className="resume-modal-title">
+                  Skills found in your resume
+                </div>
+                <div className="resume-modal-sub" style={{ marginBottom: 4 }}>
+                  Uncheck anything that doesn't belong, then confirm to add the
+                  rest to My skills.
+                </div>
+                {skillNames.length === 0 ? (
+                  <p style={{ color: "var(--text-dim)", fontSize: 13 }}>
+                    No skills were found in this resume.
+                  </p>
+                ) : (
+                  <div className="skill-confirm-list">
+                    {skillNames.map((name) => (
+                      <label className="skill-confirm-row" key={name}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(checked[name])}
+                          onChange={() => toggleSkill(name)}
+                        />
+                        {name}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <div className="resume-modal-actions">
+                  <button
+                    className="icon-btn"
+                    onClick={close}
+                    disabled={confirming}
+                  >
+                    Skip
+                  </button>
+                  <button
+                    className="btn-primary"
+                    style={{ width: "auto" }}
+                    onClick={handleConfirm}
+                    disabled={confirming || selectedCount === 0}
+                  >
+                    {confirming
+                      ? "Adding…"
+                      : `Add ${selectedCount} skill${selectedCount === 1 ? "" : "s"}`}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {phase === "failed" && (
+              <div className="resume-modal-content-left">
+                <div className="resume-modal-title">
+                  Skill extraction failed
+                </div>
+                <div className="resume-modal-sub" style={{ marginBottom: 16 }}>
+                  {errorMessage || "Something went wrong reading this resume."}{" "}
+                  The resume itself was still saved — add skills manually if
+                  needed.
+                </div>
+                <div className="resume-modal-actions">
+                  <button
+                    className="btn-primary"
+                    style={{ width: "auto" }}
+                    onClick={close}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {phase === "timeout" && (
+              <div className="resume-modal-content-left">
+                <div className="resume-modal-title">Still processing</div>
+                <div className="resume-modal-sub" style={{ marginBottom: 16 }}>
+                  Extraction is taking longer than expected. The resume was
+                  saved — check back shortly, or add skills manually for now.
+                </div>
+                <div className="resume-modal-actions">
+                  <button
+                    className="btn-primary"
+                    style={{ width: "auto" }}
+                    onClick={close}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </>
-  );
-}
-
-function AutomationStatusBanner({ automationStatus }) {
-  if (!automationStatus || !automationStatus.status) return null;
-
-  if (automationStatus.status === "triggered") {
-    return (
-      <div className="automation-banner automation-banner-pending">
-        <span className="automation-spinner" />
-        Extracting skills from your resume…
-      </div>
-    );
-  }
-
-  if (automationStatus.status === "failed") {
-    return (
-      <div className="automation-banner automation-banner-failed">
-        Automatic skill extraction failed
-        {automationStatus.message ? `: ${automationStatus.message}` : "."} Add
-        skills manually above.
-      </div>
-    );
-  }
-
-  return (
-    <div className="automation-banner automation-banner-success">
-      Skills extracted from your resume — check the list above.
-    </div>
   );
 }

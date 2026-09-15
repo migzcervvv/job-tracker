@@ -14,14 +14,23 @@ import { notify } from "../notify.js";
 
 export function Settings() {
   const [skills, setSkills] = useState(null);
+  // Bumped every time `skills` is replaced from the server so TagEditor
+  // (which owns its own draft state internally) remounts with the fresh
+  // list instead of going stale after a resume confirms new skills.
+  const [skillsVersion, setSkillsVersion] = useState(0);
   const [resumes, setResumes] = useState(null);
 
   const refreshSkills = useCallback(() => {
-    getMySkills()
-      .then(setSkills)
-      .catch((err) =>
-        notify.error("Could not load skills", extractErrorMessage(err)),
-      );
+    return getMySkills()
+      .then((data) => {
+        setSkills(data);
+        setSkillsVersion((v) => v + 1);
+        return data;
+      })
+      .catch((err) => {
+        notify.error("Could not load skills", extractErrorMessage(err));
+        throw err;
+      });
   }, []);
 
   const refreshResumes = useCallback(() => {
@@ -33,9 +42,27 @@ export function Settings() {
   }, []);
 
   useEffect(() => {
-    refreshSkills();
+    refreshSkills().catch(() => {});
     refreshResumes();
   }, [refreshSkills, refreshResumes]);
+
+  // Called only after the user checks/unchecks and hits "Add" in the
+  // resume confirmation modal — nothing from a resume reaches the skill
+  // list without this.
+  async function handleConfirmResumeSkills(selectedNames) {
+    const current = skills ?? [];
+    const merged = [...current];
+    for (const name of selectedNames) {
+      if (!merged.some((s) => s.toLowerCase() === name.toLowerCase()))
+        merged.push(name);
+    }
+    const saved = await setMySkills(merged);
+    setSkills(saved);
+    setSkillsVersion((v) => v + 1);
+    notify.success(
+      `Added ${selectedNames.length} skill${selectedNames.length === 1 ? "" : "s"} from your resume`,
+    );
+  }
 
   async function handleDownload(id) {
     try {
@@ -67,28 +94,30 @@ export function Settings() {
           marginBottom: 12,
         }}
       >
-        Feeds the Skills Gap chart — compared against skills tagged on your
-        applications. Uploading a resume below adds to this list automatically
-        once extraction finishes.
+        Add manually below, or upload a resume to extract them automatically —
+        you'll review the list before anything is added.
       </p>
       {skills === null ? (
         <p style={{ color: "var(--text-dim)" }}>Loading…</p>
       ) : (
         <TagEditor
+          key={skillsVersion}
           initialSkills={skills}
           onSave={setMySkills}
           saveLabel="Save skills"
         />
       )}
 
+      <div style={{ marginTop: 16 }}>
+        <ResumeUpload
+          onUploaded={refreshResumes}
+          onConfirmSkills={handleConfirmResumeSkills}
+        />
+      </div>
+
       <div className="section-label" style={{ marginTop: 28 }}>
         Resumes
       </div>
-      <ResumeUpload
-        onUploaded={refreshResumes}
-        onSkillsExtracted={refreshSkills}
-      />
-
       {resumes === null && <p style={{ color: "var(--text-dim)" }}>Loading…</p>}
       {resumes !== null && resumes.length === 0 && (
         <p style={{ color: "var(--text-dim)", fontSize: 13 }}>
