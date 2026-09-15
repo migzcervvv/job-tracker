@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   DndContext,
   DragOverlay,
@@ -11,62 +11,24 @@ import {
 import { Layout } from '../components/Layout.jsx';
 import { KanbanColumn } from '../components/KanbanColumn.jsx';
 import { DetailModal } from '../components/DetailModal.jsx';
-import { listApplications, updateApplicationStatus } from '../api/applications.js';
+import { updateApplicationStatus } from '../api/applications.js';
 import { STATUS_META, statusMeta } from '../api/statusMeta.js';
 import { extractErrorMessage } from '../api/errors.js';
 import { notify } from '../notify.js';
+import { useApplications } from '../state/ApplicationsContext.jsx';
 
 const ACTIVE_STATUSES = STATUS_META.filter((s) => !s.terminal);
 const CLOSED_STATUSES = STATUS_META.filter((s) => s.terminal);
 
 export function Dashboard() {
-  const [applications, setApplications] = useState(null);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const { applications, loadFailed, updateApplication, removeApplication } = useApplications();
   const [view, setView] = useState('active');
   const [activeId, setActiveId] = useState(null);
   const [openApplicationId, setOpenApplicationId] = useState(null);
 
-  const location = useLocation();
-  const navigate = useNavigate();
-
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
-
-  useEffect(() => {
-    let cancelled = false;
-    const pendingNew = location.state?.newApplication;
-
-    listApplications()
-      .then((data) => {
-        if (cancelled) return;
-        // If the just-created application isn't in this GET's result yet
-        // (write-visibility lag from wherever it's coming from), show it
-        // anyway — we already know it exists, we made it a second ago.
-        if (pendingNew && !data.some((a) => a.id === pendingNew.id)) {
-          setApplications([pendingNew, ...data]);
-        } else {
-          setApplications(data);
-        }
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        if (pendingNew) {
-          // Even a failed refresh shouldn't hide an application we know exists.
-          setApplications([pendingNew]);
-        } else {
-          setLoadFailed(true);
-          notify.error('Could not load the board', extractErrorMessage(err));
-        }
-      });
-
-    // Clear the navigation state once consumed so it doesn't re-apply on a
-    // later remount of this same history entry (e.g. browser back/forward).
-    if (pendingNew) navigate('.', { replace: true, state: null });
-
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const columns = view === 'active' ? ACTIVE_STATUSES : CLOSED_STATUSES;
 
@@ -80,8 +42,9 @@ export function Dashboard() {
   }, [applications]);
 
   const activeApplication = applications?.find((a) => a.id === activeId) ?? null;
-  // Derived from live state, not a snapshot — so the modal reflects a status
-  // change immediately, whether it came from the dropdown or a drag.
+  // Derived from the shared store, not a local snapshot — so the modal
+  // reflects a status change immediately, whether it came from the
+  // dropdown, a drag, or any other page that touches the same store.
   const openApplication = applications?.find((a) => a.id === openApplicationId) ?? null;
 
   async function moveApplication(applicationId, newStatus) {
@@ -89,18 +52,13 @@ export function Dashboard() {
     if (!current || current.status === newStatus) return;
 
     const previousStatus = current.status;
-
-    setApplications((prev) =>
-      prev.map((a) => (a.id === applicationId ? { ...a, status: newStatus } : a))
-    );
+    updateApplication(applicationId, { status: newStatus });
 
     try {
       await updateApplicationStatus(applicationId, newStatus);
       notify.success(`Moved to ${statusMeta(newStatus).label}`);
     } catch (err) {
-      setApplications((prev) =>
-        prev.map((a) => (a.id === applicationId ? { ...a, status: previousStatus } : a))
-      );
+      updateApplication(applicationId, { status: previousStatus });
       notify.error('Could not move the card', extractErrorMessage(err));
     }
   }
@@ -117,7 +75,7 @@ export function Dashboard() {
   }
 
   function handleApplicationDeleted(applicationId) {
-    setApplications((prev) => prev.filter((a) => a.id !== applicationId));
+    removeApplication(applicationId);
   }
 
   return (

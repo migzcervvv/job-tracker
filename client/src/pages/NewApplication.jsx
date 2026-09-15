@@ -4,9 +4,11 @@ import { Layout } from '../components/Layout.jsx';
 import { createApplication } from '../api/applications.js';
 import { extractErrorMessage } from '../api/errors.js';
 import { notify } from '../notify.js';
+import { useApplications } from '../state/ApplicationsContext.jsx';
 
 export function NewApplication() {
   const navigate = useNavigate();
+  const { addApplication } = useApplications();
 
   const [title, setTitle] = useState('');
   const [company, setCompany] = useState('');
@@ -18,9 +20,6 @@ export function NewApplication() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      // Same promise instance handed to notify.promise (for the toast lifecycle)
-      // and awaited here (to get the resolved value) — a Promise can be
-      // awaited more than once safely, it's memoized after first settle.
       const createPromise = createApplication({ title, company, jobUrl, rawDescription });
       notify.promise(createPromise, {
         loading: 'Saving application…',
@@ -34,10 +33,12 @@ export function NewApplication() {
       });
 
       const result = await createPromise;
-      // Pass the just-created row through navigation state so the board
-      // shows it immediately, instead of depending on a GET request that
-      // may not yet reflect a write that was only just committed.
-      navigate('/', { replace: true, state: { newApplication: result.application } });
+      // Update the shared store directly from this response — no re-fetch,
+      // no dependency on a GET reflecting a write that only just committed.
+      if (!result.wasDuplicate) {
+        addApplication(result.application);
+      }
+      navigate('/', { replace: true });
     } catch {
       // toast already shown by notify.promise
     } finally {
