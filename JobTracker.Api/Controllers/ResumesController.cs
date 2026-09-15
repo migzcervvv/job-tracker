@@ -27,11 +27,40 @@ public class ResumesController(AppDbContext db,
     };
 
     [HttpGet]
-    public async Task<IActionResult> List() =>
-        Ok(await db.Resumes
+    public async Task<IActionResult> List()
+    {
+        // Deserializing ProposedSkillsJson can't be translated to SQL, so
+        // pull the raw rows first, then shape the count in memory.
+        var raw = await db.Resumes
+            .Where(r => r.UserId == CurrentUserId)
             .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new { r.Id, r.FileName, r.ContentType, r.SizeBytes, r.CreatedAt })
-            .ToListAsync());
+            .Select(r => new
+            {
+                r.Id,
+                r.FileName,
+                r.ContentType,
+                r.SizeBytes,
+                r.CreatedAt,
+                r.ExtractionStatus,
+                r.ProposedSkillsJson,
+            })
+            .ToListAsync();
+
+        var shaped = raw.Select(r => new
+        {
+            r.Id,
+            r.FileName,
+            r.ContentType,
+            r.SizeBytes,
+            r.CreatedAt,
+            r.ExtractionStatus,
+            ProposedSkillCount = string.IsNullOrEmpty(r.ProposedSkillsJson)
+                ? 0
+                : (System.Text.Json.JsonSerializer.Deserialize<List<string>>(r.ProposedSkillsJson) ?? new()).Count,
+        });
+
+        return Ok(shaped);
+    }
 
     [HttpPost]
     [RequestSizeLimit(10_000_000)]
@@ -97,6 +126,17 @@ public class ResumesController(AppDbContext db,
                         Status = res.IsSuccessStatusCode ? "succeeded" : "failed",
                         Message = res.IsSuccessStatusCode ? resumeId.ToString() : $"resume {resumeId}: HTTP {(int)res.StatusCode}",
                     });
+
+                    // A non-success response here only means the *trigger* call
+                    // to n8n failed (e.g. webhook unreachable) — n8n never got
+                    // the job, so it will never call back to /internal/resumes/{id}/extraction.
+                    // Without this, the resume sits at "triggered" forever and
+                    // the UI shows it as perpetually extracting.
+                    if (!res.IsSuccessStatusCode)
+                    {
+                        var scopedResume = await scopedDb.Resumes.FirstOrDefaultAsync(r => r.Id == resumeId);
+                        if (scopedResume is not null) scopedResume.ExtractionStatus = "failed";
+                    }
                     await scopedDb.SaveChangesAsync();
                 }
                 catch (Exception ex)
@@ -109,6 +149,9 @@ public class ResumesController(AppDbContext db,
                         Status = "failed",
                         Message = $"resume {resumeId}: {ex.Message}",
                     });
+
+                    var scopedResume = await scopedDb.Resumes.FirstOrDefaultAsync(r => r.Id == resumeId);
+                    if (scopedResume is not null) scopedResume.ExtractionStatus = "failed";
                     await scopedDb.SaveChangesAsync();
                 }
             });
@@ -124,16 +167,16 @@ public class ResumesController(AppDbContext db,
     [HttpGet("{id}/download")]
     public async Task<IActionResult> Download(Guid id)
     {
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
         if (resume is null) return NotFound();
         var url = await storage.CreateSignedUrlAsync(resume.StoragePath);
-        return Ok(new { url });
+        return Ok(new { url, resume.ContentType, resume.FileName });
     }
 
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(Guid id)
     {
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
         if (resume is null) return NotFound();
         await storage.DeleteAsync(resume.StoragePath);
         db.Resumes.Remove(resume);
@@ -146,7 +189,7 @@ public class ResumesController(AppDbContext db,
     [HttpGet("{id}/proposed-skills")]
     public async Task<IActionResult> GetProposedSkills(Guid id)
     {
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
         if (resume is null) return NotFound();
 
         var proposed = string.IsNullOrEmpty(resume.ProposedSkillsJson)
@@ -168,7 +211,7 @@ public class ResumesController(AppDbContext db,
     [HttpPost("{id}/confirm-skills")]
     public async Task<IActionResult> ConfirmSkills(Guid id, [FromBody] SetSkillsRequest req)
     {
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
         if (resume is null) return NotFound();
 
         var skills = await skillResolver.ResolveSkillsAsync(req.SkillNames);
@@ -180,7 +223,26 @@ public class ResumesController(AppDbContext db,
         foreach (var skill in skills.Where(s => !existing.Contains(s.Id)))
             db.UserSkills.Add(new UserSkill { UserId = CurrentUserId, SkillId = skill.Id });
 
+        // Clear the proposal once reviewed — this is what moves the resume
+        // out of "pending review" in the extraction log. Without it, a
+        // resume with proposed skills stays flagged for review forever,
+        // even after the user has acted on it.
+        resume.ProposedSkillsJson = null;
+
         await db.SaveChangesAsync();
         return Ok(skills.Select(s => s.Name));
+    }
+
+    // Dismiss proposed skills without adding any of them — same "mark
+    // reviewed" effect as confirm-skills, minus the UserSkills writes.
+    [HttpPost("{id}/dismiss-skills")]
+    public async Task<IActionResult> DismissProposedSkills(Guid id)
+    {
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
+        if (resume is null) return NotFound();
+
+        resume.ProposedSkillsJson = null;
+        await db.SaveChangesAsync();
+        return NoContent();
     }
 }

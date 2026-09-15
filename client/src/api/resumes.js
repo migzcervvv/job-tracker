@@ -14,16 +14,28 @@ export async function uploadResume(file) {
   return data;
 }
 
+// Returns { url, contentType, fileName } — url is a short-lived signed link.
 export async function getResumeDownloadUrl(id) {
   const { data } = await api.get(`/api/resumes/${id}/download`);
-  return data.url;
+  return data;
 }
 
 export async function deleteResume(id) {
   await api.delete(`/api/resumes/${id}`);
 }
 
-export async function getResumeAutomationStatus(id) {
-  const { data } = await api.get(`/api/resumes/${id}/automation-status`);
+export async function getProposedSkills(id) {
+  const { data } = await api.get(`/api/resumes/${id}/proposed-skills`);
   return data;
+}
+
+export async function confirmResumeSkills(id, skillNames) {
+  const { data } = await api.post(`/api/resumes/${id}/confirm-skills`, {
+    skillNames,
+  });
+  return data;
+}
+
+export async function dismissResumeSkills(id) {
+  await api.post(`/api/resumes/${id}/dismiss-skills`);
 }

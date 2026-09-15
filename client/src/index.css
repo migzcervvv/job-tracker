@@ -1204,6 +1204,52 @@ select {
   margin-top: 6px;
 }
 
+/* ---------- Resume skill-extraction log (My skills page) ---------- */
+
+.extraction-log {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.extraction-log-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+}
+
+.extraction-log-row:last-child {
+  border-bottom: none;
+}
+
+.resume-preview-panel {
+  max-width: 780px;
+  width: 100%;
+}
+
+.resume-preview-body {
+  padding: 16px 24px;
+  min-height: 200px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.resume-preview-frame {
+  width: 100%;
+  height: 70vh;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
 /* ---------- Automation log (log-style view) ---------- */
 
 .log-view {
