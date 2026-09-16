@@ -131,11 +131,20 @@ public class SkillsController(AppDbContext db) : ControllerBase
         {
             var recentFreq = 100.0 * g.RecentCount / recentTotal;
             var olderFreq = 100.0 * g.OlderCount / olderTotal;
+
+            // Filtered by THIS skill's id (g.SkillId) — not a global average
+            // over every skill-link that happens to exist.
+            var linksForSkill = allLinks.Where(l => l.SkillId == g.SkillId).ToList();
+            var avgImportance = linksForSkill.Count > 0
+                ? linksForSkill.Average(l => Math.Max(l.Importance, 1))
+                : 2.0;
+
             return new SkillGapItem(
                 skillNames.GetValueOrDefault(g.SkillId, "unknown"),
                 (int)Math.Round(100.0 * g.Count / allApps.Count),
                 mySkillIds.Contains(g.SkillId),
-                (int)Math.Round(recentFreq - olderFreq)
+                (int)Math.Round(recentFreq - olderFreq),
+                avgImportance
             );
         }).ToList();
 

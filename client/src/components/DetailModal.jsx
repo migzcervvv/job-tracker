@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { STATUS, STATUS_META, statusMeta } from '../api/statusMeta.js';
-import { getApplication, deleteApplication, getAutomationStatus } from '../api/applications.js';
+import {
+  getApplication,
+  deleteApplication,
+  getAutomationStatus,
+  generateInterviewQuestions,
+} from '../api/applications.js';
 import { getApplicationSkills, setApplicationSkills } from '../api/skills.js';
 import { relativeTime } from '../api/dates.js';
 import { eventLabel } from '../api/timelineMeta.js';
@@ -32,6 +37,7 @@ export function DetailModal({ application, onClose, onStatusChange, onDeleted })
   const [requiredSkills, setRequiredSkills] = useState(null);
   const [automationStatus, setAutomationStatus] = useState(null);
   const skillsRefetchedRef = useRef(false);
+  const [generatingQuestions, setGeneratingQuestions] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -119,6 +125,7 @@ export function DetailModal({ application, onClose, onStatusChange, onDeleted })
   // Non-interview stages: one record per stage. Interview: every round, most recent first.
   const stageRecords = (stageDetails ?? []).filter((s) => s.stage === currentStage);
   const latestRecord = stageRecords[0];
+  const currentRound = isInterview ? stageRecords.length + 1 : null;
   const priorRounds = isInterview ? stageRecords : [];
 
   function handleStageSaved(saved) {
@@ -127,6 +134,18 @@ export function DetailModal({ application, onClose, onStatusChange, onDeleted })
       const withoutThis = existing.filter((s) => s.id !== saved.id);
       return [saved, ...withoutThis];
     });
+  }
+
+  async function handleGenerateQuestions() {
+    setGeneratingQuestions(true);
+    try {
+      await generateInterviewQuestions(application.id, currentRound);
+      notify.info('Generating questions…', 'They land in Prep notes once the workflow finishes.');
+    } catch (err) {
+      notify.error('Could not start generation', extractErrorMessage(err));
+    } finally {
+      setGeneratingQuestions(false);
+    }
   }
 
   async function handleDelete() {
@@ -227,6 +246,32 @@ export function DetailModal({ application, onClose, onStatusChange, onDeleted })
                 )}
               </div>
 
+              {typeof application.fitPercentage === 'number' && (
+                <div className="fit-block">
+                  <div className="fit-block-head">
+                    <span className="section-label" style={{ margin: 0 }}>Fit</span>
+                    <span className="fit-block-value">{application.fitPercentage}%</span>
+                  </div>
+                  <div className="skill-bar-track">
+                    <div
+                      className="skill-bar-fill"
+                      style={{
+                        width: `${application.fitPercentage}%`,
+                        background:
+                          application.fitPercentage >= 70
+                            ? 'var(--s-interview)'
+                            : application.fitPercentage >= 40
+                              ? 'var(--s-offered)'
+                              : '#e07a6f',
+                      }}
+                    />
+                  </div>
+                  <div className="fit-block-hint">
+                    Share of this posting's required skills that are on your profile.
+                  </div>
+                </div>
+              )}
+
               <div className="section-label">Job description</div>
               <div className="jd-block" style={{ marginBottom: 20 }}>
                 {application.rawDescription || 'No description saved.'}
@@ -249,8 +294,21 @@ export function DetailModal({ application, onClose, onStatusChange, onDeleted })
 
               {stageDetails !== null && (
                 <div style={{ marginBottom: 20 }}>
-                  <div className="section-label">
-                    {statusMeta(currentStage).label} details
+                  <div className="stage-head-row">
+                    <div className="section-label" style={{ margin: 0 }}>
+                      {statusMeta(currentStage).label} details
+                    </div>
+                    {isInterview && (
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={handleGenerateQuestions}
+                        disabled={generatingQuestions}
+                        title="Generates likely questions from this job description and your resume, into Prep notes"
+                      >
+                        {generatingQuestions ? 'Starting…' : 'Suggest questions'}
+                      </button>
+                    )}
                   </div>
 
                   {priorRounds.length > 0 && (

@@ -1,72 +1,51 @@
-import { useRef, useState } from "react";
-import { uploadResume } from "../api/resumes.js";
-import { extractErrorMessage } from "../api/errors.js";
-import { notify } from "../notify.js";
+import { useRef, useState } from 'react';
+import { uploadResume } from '../api/resumes.js';
+import { extractErrorMessage } from '../api/errors.js';
+import { notify } from '../notify.js';
 
-const ACCEPTED = ".pdf,.doc,.docx";
+const ACCEPTED = '.pdf,.doc,.docx';
 
-// Upload only — no waiting on n8n here. It sits as the first tile in the
-// resume rack, so adding a resume reads as "add another document" rather
-// than a separate, disconnected form.
 export function ResumeUpload({ onUploaded }) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
-  const [uploading, setUploading] = useState(false);
 
   async function handleFile(file) {
     if (!file) return;
-    setUploading(true);
     try {
-      await uploadResume(file);
-      notify.success(
-        "Resume uploaded",
-        "Extracting skills in the background — check My skills shortly.",
-      );
-      onUploaded?.();
-    } catch (err) {
-      notify.error("Could not upload this file", extractErrorMessage(err));
+      const resume = await notify.promise(uploadResume(file), {
+        loading: 'Uploading resume…',
+        success: 'Resume uploaded',
+        error: (err) => extractErrorMessage(err, 'Could not upload this file'),
+      });
+      onUploaded(resume);
+    } catch {
+      // toast already shown
     } finally {
-      setUploading(false);
-      if (inputRef.current) inputRef.current.value = "";
+      if (inputRef.current) inputRef.current.value = '';
     }
   }
 
   return (
-    <label
-      htmlFor="resume-upload"
-      className={[
-        "resume-upload-tile",
-        dragOver && "is-drag-over",
-        uploading && "is-uploading",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragOver(true);
-      }}
+    <div
+      className="upload-drop"
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
       onDrop={(e) => {
         e.preventDefault();
         setDragOver(false);
         handleFile(e.dataTransfer.files?.[0]);
       }}
+      style={dragOver ? { borderColor: 'var(--accent)', color: 'var(--text)' } : undefined}
     >
       <input
         ref={inputRef}
         id="resume-upload"
         type="file"
         accept={ACCEPTED}
-        disabled={uploading}
         onChange={(e) => handleFile(e.target.files?.[0])}
       />
-      <span className="resume-upload-mark" aria-hidden="true">
-        {uploading ? "…" : "+"}
-      </span>
-      <span className="resume-upload-label">
-        {uploading ? "Uploading" : "Add resume"}
-      </span>
-      <span className="resume-upload-hint">PDF, DOC, or DOCX · drag or browse</span>
-    </label>
+      Drag a PDF or Word doc here, or{' '}
+      <label htmlFor="resume-upload">browse</label>
+    </div>
   );
 }

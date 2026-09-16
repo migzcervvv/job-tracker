@@ -3,6 +3,7 @@ using JobTracker.Api.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using System.Reflection.Emit;
 
 namespace JobTracker.Api.Data;
 
@@ -24,6 +25,7 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
     public DbSet<UserSkill> UserSkills => Set<UserSkill>();
     public DbSet<Resume> Resumes => Set<Resume>();
     public DbSet<AutomationLogEntry> AutomationLogEntries => Set<AutomationLogEntry>();
+    public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -62,5 +64,17 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
             .WithOne(x => x.Application!)
             .HasForeignKey(x => x.ApplicationId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasPostgresExtension("vector");
+
+        builder.Entity<UserProfile>(e =>
+        {
+            e.HasKey(p => p.UserId);
+            e.Property(p => p.ResumeEmbedding).HasColumnType("vector(1536)");
+        });
+
+        builder.Entity<Application>()
+            .Property(a => a.JobEmbedding)
+            .HasColumnType("vector(1536)");
     }
 }

@@ -14,6 +14,7 @@ public class ApplicationSkill
     public Guid SkillId { get; set; }
     public Application? Application { get; set; }
     public Skill? Skill { get; set; }
+    public int Importance { get; set; } // 3 = required, 2 = preferred, 1 = nice_to_have
 }
 
 // Models/UserSkill.cs
@@ -22,4 +23,6 @@ public class UserSkill
     public Guid UserId { get; set; }
     public Guid SkillId { get; set; }
     public Skill? Skill { get; set; }
+    public string? EvidenceText { get; set; }
+    public double EvidenceStrength { get; set; } // 0.0–1.0
 }

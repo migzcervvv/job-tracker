@@ -1,6 +1,7 @@
 ﻿using JobTracker.Api.Data;
 using JobTracker.Api.Dtos;
 using JobTracker.Api.Models;
+using JobTracker.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -16,7 +17,8 @@ namespace JobTracker.Api.Controllers;
 public class ApplicationsController(AppDbContext db, 
     IHttpClientFactory httpClientFactory, 
     IConfiguration config, 
-    IServiceScopeFactory scopeFactory) : ControllerBase
+    IServiceScopeFactory scopeFactory,
+    IFitScorer fitScorer) : ControllerBase
 {
     private Guid CurrentUserId =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -30,32 +32,12 @@ public class ApplicationsController(AppDbContext db,
     [HttpGet]
     public async Task<IActionResult> List()
     {
-        var mySkillIds = (await db.UserSkills
-            .Where(us => us.UserId == CurrentUserId)
-            .Select(us => us.SkillId)
-            .ToListAsync())
-            .ToHashSet();
-
         var apps = await db.Applications.ToListAsync();
-        var appIds = apps.Select(a => a.Id).ToList();
+        var scores = await fitScorer.ScoreAsync(CurrentUserId, apps.Select(a => a.Id).ToList());
 
-        var allLinks = await db.ApplicationSkills
-            .Where(x => appIds.Contains(x.ApplicationId))
-            .ToListAsync();
-        var linksByApp = allLinks.GroupBy(l => l.ApplicationId).ToDictionary(g => g.Key, g => g.Select(l => l.SkillId).ToList());
-
-        var result = apps.Select(a =>
-        {
-            var required = linksByApp.GetValueOrDefault(a.Id, new List<Guid>());
-            int? fit = required.Count > 0
-                ? (int)Math.Round(100.0 * required.Count(id => mySkillIds.Contains(id)) / required.Count)
-                : null;
-
-            return new ApplicationResponse(a.Id, a.Title, a.Company, a.JobUrl, a.RawDescription,
-                a.Status, a.AppliedDate, a.UpdatedAt, fit);
-        });
-
-        return Ok(result);
+        return Ok(apps.Select(a => new ApplicationListItem(
+                a.Id, a.Title, a.Company, a.JobUrl, a.Status, a.AppliedDate, a.UpdatedAt,
+                scores.TryGetValue(a.Id, out var f) ? f.Overall : null)));
     }
 
     [HttpPost]
@@ -220,7 +202,7 @@ public class ApplicationsController(AppDbContext db,
 
         var response = new ApplicationDetailResponse(
             app.Id, app.Title, app.Company, app.JobUrl, app.RawDescription,
-            app.Status, app.AppliedDate, app.UpdatedAt,
+            app.Status, app.AppliedDate, app.UpdatedAt, fitPercentage,
             app.TimelineEvents.OrderByDescending(t => t.CreatedAt)
                 .Select(t => new TimelineEventResponse(t.Id, t.Type, t.Body, t.CreatedAt)).ToList(),
             app.StageDetails.OrderByDescending(s => s.CreatedAt)
@@ -270,6 +252,85 @@ public class ApplicationsController(AppDbContext db,
         if (latest is null) return Ok(new { status = (string?)null });
         return Ok(new { status = latest.Status, message = latest.Message, createdAt = latest.CreatedAt });
     }
-}
+    // ApplicationsController.cs
+    public record GenerateQuestionsRequest(int? Round);
 
+    [HttpPost("{id}/interview-questions")]
+    public async Task<IActionResult> GenerateInterviewQuestions(Guid id, [FromBody] GenerateQuestionsRequest req)
+    {
+        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
+        if (app is null) return NotFound();
+
+        var webhookUrl = config["N8n:InterviewQuestionsWebhookUrl"];
+        if (string.IsNullOrEmpty(webhookUrl))
+            return BadRequest("Interview question generation is not configured.");
+
+        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == CurrentUserId);
+
+        var applicationId = app.Id;
+        var jobDescription = app.RawDescription;
+        var jobTitle = app.Title;
+        var company = app.Company;
+        var resumeText = profile?.ResumeRawText ?? "";
+        var round = req.Round ?? 1;
+
+        _ = Task.Run(async () =>
+        {
+            using var scope = scopeFactory.CreateScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
+            {
+                Id = Guid.NewGuid(),
+                Type = "interview_questions",
+                ApplicationId = applicationId,
+                Status = "triggered",
+            });
+            await scopedDb.SaveChangesAsync();
+
+            try
+            {
+                var client = httpClientFactory.CreateClient("n8n");
+                client.Timeout = TimeSpan.FromSeconds(30);
+                var res = await client.PostAsJsonAsync(webhookUrl, new
+                {
+                    applicationId,
+                    jobTitle,
+                    company,
+                    jobDescription,
+                    resumeText,
+                    round,
+                });
+
+                scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
+                {
+                    Id = Guid.NewGuid(),
+                    Type = "interview_questions",
+                    ApplicationId = applicationId,
+                    Status = res.IsSuccessStatusCode ? "succeeded" : "failed",
+                    Message = res.IsSuccessStatusCode ? null : $"HTTP {(int)res.StatusCode}",
+                });
+                await scopedDb.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
+                {
+                    Id = Guid.NewGuid(),
+                    Type = "interview_questions",
+                    ApplicationId = applicationId,
+                    Status = "failed",
+                    Message = ex.Message,
+                });
+                await scopedDb.SaveChangesAsync();
+            }
+        });
+
+        return Accepted(new { status = "triggered" });
+    }
+}
+public record ApplicationListItem(
+    Guid Id, string Title, string Company, string? JobUrl,
+    ApplicationStatus Status, DateTimeOffset AppliedDate, DateTimeOffset UpdatedAt,
+    int? FitPercentage);
 public record CreateApplicationRequest(string Title, string? Company, string? JobUrl, string RawDescription);

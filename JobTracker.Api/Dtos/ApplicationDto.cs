@@ -26,6 +26,7 @@ public record ApplicationDetailResponse(
     ApplicationStatus Status,
     DateTimeOffset AppliedDate,
     DateTimeOffset UpdatedAt,
+    int? FitPercentage,
     List<TimelineEventResponse> Timeline,
     List<StageDetailResponse> StageDetails
 );
@@ -33,5 +34,5 @@ public record ApplicationDetailResponse(
 public record UpsertStageDetailRequest(ApplicationStatus Stage, Dictionary<string, object?> Fields);
 public record StageDetailResponse(Guid Id, ApplicationStatus Stage, string FieldsJson, DateTimeOffset CreatedAt);
 public record SetSkillsRequest(List<string> SkillNames);
-public record SkillGapItem(string Name, int Frequency, bool IHaveIt, int Trend); 
+public record SkillGapItem(string Name, int Frequency, bool IHaveIt, int Trend, double AvgImportance); 
 public record SkillsGapResponse(List<SkillGapItem> Skills);

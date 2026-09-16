@@ -41,3 +41,10 @@ export async function getAutomationStatus(id) {
   const { data } = await api.get(`/api/applications/${id}/automation-status`);
   return data;
 }
+
+// Triggers n8n interview-question generation for one application.
+// Fire-and-forget on the server; poll getApplication() for prepNotes.
+export async function generateInterviewQuestions(id, round) {
+  const { data } = await api.post(`/api/applications/${id}/interview-questions`, { round });
+  return data;
+}

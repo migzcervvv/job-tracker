@@ -1,126 +1,132 @@
-import { useEffect, useMemo, useState } from "react";
-import { Layout } from "../../components/Layout.jsx";
-import { getAutomationLog } from "../../api/admin.js";
-import { relativeTime } from "../../api/dates.js";
-import { extractErrorMessage } from "../../api/errors.js";
-import { notify } from "../../notify.js";
+import { useEffect, useMemo, useState } from 'react';
+import { Layout } from '../../components/Layout.jsx';
+import { getAutomationLog } from '../../api/admin.js';
+import { logTime, logBucket, absoluteTime } from '../../api/format.js';
+import { extractErrorMessage } from '../../api/errors.js';
+import { notify } from '../../notify.js';
 
-const STATUS_META = {
-  triggered: { color: "var(--s-pending)", label: "Triggered" },
-  succeeded: { color: "var(--s-interview)", label: "Succeeded" },
-  failed: { color: "#e07a6f", label: "Failed" },
+const BUCKET_ORDER = ['Last hour', 'Today', 'Yesterday', 'This week', 'Older'];
+
+const LEVEL = {
+  triggered: { label: 'RUN', color: 'var(--s-pending)' },
+  succeeded: { label: 'OK', color: 'var(--s-interview)' },
+  failed: { label: 'ERR', color: '#e07a6f' },
 };
 
-function dayLabel(dateString) {
-  const date = new Date(dateString);
-  const now = new Date();
-  const startOf = (d) =>
-    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const diffDays = Math.round((startOf(now) - startOf(date)) / 86400000);
-
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7)
-    return date.toLocaleDateString(undefined, { weekday: "long" });
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function timeOfDay(dateString) {
-  return new Date(dateString).toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+const FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'failed', label: 'Errors' },
+  { key: 'triggered', label: 'Running' },
+  { key: 'succeeded', label: 'Succeeded' },
+];
 
 export function AdminAutomationLog() {
   const [entries, setEntries] = useState(null);
+  const [filter, setFilter] = useState('all');
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
   function refresh() {
-    getAutomationLog(50)
+    getAutomationLog(200)
       .then(setEntries)
-      .catch((err) =>
-        notify.error("Could not load automation log", extractErrorMessage(err)),
-      );
+      .catch((err) => notify.error('Could not load automation log', extractErrorMessage(err)));
   }
 
   useEffect(refresh, []);
 
-  // Entries come back newest-first from the API — group consecutive
-  // entries under the calendar day they fall on, preserving that order.
-  const groups = useMemo(() => {
-    if (!entries) return [];
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(refresh, 15000);
+    return () => clearInterval(id);
+  }, [autoRefresh]);
+
+  const filtered = useMemo(
+    () => (entries ?? []).filter((e) => filter === 'all' || e.status === filter),
+    [entries, filter]
+  );
+
+  // Group into time buckets, preserving the newest-first order the API returns.
+  const grouped = useMemo(() => {
     const map = new Map();
-    for (const e of entries) {
-      const label = dayLabel(e.createdAt);
-      if (!map.has(label)) map.set(label, []);
-      map.get(label).push(e);
+    for (const e of filtered) {
+      const bucket = logBucket(e.createdAt);
+      if (!map.has(bucket)) map.set(bucket, []);
+      map.get(bucket).push(e);
     }
-    return Array.from(map.entries());
-  }, [entries]);
+    return BUCKET_ORDER.filter((b) => map.has(b)).map((b) => [b, map.get(b)]);
+  }, [filtered]);
+
+  const errorCount = (entries ?? []).filter((e) => e.status === 'failed').length;
 
   return (
     <Layout
       title="Automation log"
       actions={
-        <button className="icon-btn" onClick={refresh}>
-          Refresh
-        </button>
+        <>
+          <label className="auto-refresh">
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+            />
+            Live
+          </label>
+          <button className="icon-btn" onClick={refresh}>Refresh</button>
+        </>
       }
     >
-      {entries === null && <p style={{ color: "var(--text-dim)" }}>Loading…</p>}
+      <div className="log-toolbar">
+        <div className="view-toggle">
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              className={filter === f.key ? 'active' : ''}
+              onClick={() => setFilter(f.key)}
+            >
+              {f.label}
+              {f.key === 'failed' && errorCount > 0 && <span className="filter-count">{errorCount}</span>}
+            </button>
+          ))}
+        </div>
+        <span className="log-meta">
+          {entries === null ? 'Loading…' : `${filtered.length} of ${entries.length} entries`}
+        </span>
+      </div>
 
-      {entries !== null && entries.length === 0 && (
+      {entries !== null && filtered.length === 0 && (
         <div className="panel">
-          <p style={{ margin: 0, color: "var(--text-dim)" }}>
-            No automation activity yet — this fills in once applications start
-            triggering n8n.
+          <p style={{ margin: 0, color: 'var(--text-dim)' }}>
+            {filter === 'all'
+              ? 'No automation activity yet — this fills in once applications and resumes start triggering n8n.'
+              : 'Nothing matches this filter.'}
           </p>
         </div>
       )}
 
-      {entries !== null && entries.length > 0 && (
-        <div className="log-view">
-          {groups.map(([label, group]) => (
-            <div className="log-day-group" key={label}>
-              <div className="log-day-header">{label}</div>
-              <div className="log-rows">
-                {group.map((e) => {
-                  const meta = STATUS_META[e.status] ?? {
-                    color: "var(--text-dim)",
-                    label: e.status,
-                  };
-                  return (
-                    <div className="log-row" key={e.id}>
-                      <span
-                        className="log-time"
-                        title={new Date(e.createdAt).toLocaleString()}
-                      >
-                        {timeOfDay(e.createdAt)}
-                      </span>
-                      <span
-                        className="log-badge"
-                        style={{ color: meta.color, borderColor: meta.color }}
-                      >
-                        {meta.label}
-                      </span>
-                      <span className="log-type">{e.type}</span>
-                      <span className="log-message">
-                        {e.applicationId
-                          ? `${e.applicationId.slice(0, 8)} · `
-                          : ""}
-                        {e.message || "—"}
-                      </span>
-                      <span className="log-ago">
-                        {relativeTime(e.createdAt)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+      {grouped.map(([bucket, items]) => (
+        <div className="log-group" key={bucket}>
+          <div className="log-group-head">
+            <span>{bucket}</span>
+            <span className="log-group-count">{items.length}</span>
+          </div>
+          <div className="log-stream">
+            {items.map((e) => {
+              const level = LEVEL[e.status] ?? { label: '???', color: 'var(--text-dim)' };
+              return (
+                <div className={`log-line log-line-${e.status}`} key={e.id} title={absoluteTime(e.createdAt)}>
+                  <span className="log-level" style={{ color: level.color, borderColor: level.color }}>
+                    {level.label}
+                  </span>
+                  <span className="log-type">{e.type}</span>
+                  <span className="log-message">
+                    {e.message || (e.applicationId ? e.applicationId : '—')}
+                  </span>
+                  <span className="log-ts">{logTime(e.createdAt)}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
-      )}
+      ))}
     </Layout>
   );
 }

@@ -13,17 +13,27 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddHttpClient();
-builder.Services.AddHttpClient("n8n");
 
+builder.Services.AddSingleton<IAppStartTime, AppStartTime>();
 builder.Services.AddScoped<ICurrentUserAccessor, CurrentUserAccessor>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<ISupabaseStorageService, SupabaseStorageService>();
 builder.Services.AddScoped<ISkillResolver, SkillResolver>();
-builder.Services.AddSingleton<IAppStartTime, AppStartTime>();   // ← add this
+builder.Services.AddScoped<IFitScorer, FitScorer>();   // new
+builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("n8n");
+
+var connectionString = builder.Configuration.GetConnectionString("Default");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+    options.UseNpgsql(
+        connectionString,
+        o =>
+        {
+            o.UseVector(); // This line will work if the correct package is installed.
+        }
+    )
+);
 
 builder.Services
     .AddIdentity<IdentityUser<Guid>, IdentityRole<Guid>>(options =>
@@ -58,25 +68,17 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
-var corsOrigin = builder.Configuration["Cors:Origin"];
+var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>();
 
-if (string.IsNullOrWhiteSpace(corsOrigin))
-{
-    throw new InvalidOperationException(
-        "Cors:Origin is not configured."
-    );
-}
+if (corsOrigins is null || corsOrigins.Length == 0)
+    throw new InvalidOperationException("Cors:Origins is not configured.");
 
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Frontend", policy =>
-    {
-        policy
-            .WithOrigins(corsOrigin)
-            .AllowAnyHeader()
-            .AllowAnyMethod();
-    });
+        policy.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod());
 });
+
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders =

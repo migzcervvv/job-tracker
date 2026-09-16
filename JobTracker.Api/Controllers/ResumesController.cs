@@ -245,4 +245,25 @@ public class ResumesController(AppDbContext db,
         await db.SaveChangesAsync();
         return NoContent();
     }
+    [HttpGet("{id}/automation-status")]
+    public async Task<IActionResult> GetAutomationStatus(Guid id)
+    {
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
+        if (resume is null) return NotFound();
+
+        // Resume.ExtractionStatus is the authoritative value — the callback sets it
+        // transactionally alongside the extracted data. AutomationLogEntry is a
+        // best-effort audit trail and can lag or be missing entirely.
+        var latest = await db.AutomationLogEntries
+            .Where(e => e.Type == "resume_extraction" && e.Message != null && e.Message.Contains(id.ToString()))
+            .OrderByDescending(e => e.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        return Ok(new
+        {
+            status = resume.ExtractionStatus,
+            message = resume.ExtractionStatus == "failed" ? latest?.Message : null,
+            createdAt = latest?.CreatedAt,
+        });
+    }
 }
