@@ -1,6 +1,7 @@
 ﻿using JobTracker.Api.Data;
 using JobTracker.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Pgvector.EntityFrameworkCore;
 using Xunit;
 
