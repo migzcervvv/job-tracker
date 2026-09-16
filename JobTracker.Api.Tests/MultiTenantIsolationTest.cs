@@ -1,7 +1,7 @@
 ﻿using JobTracker.Api.Data;
 using JobTracker.Api.Models;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 using Pgvector.EntityFrameworkCore;
 using Xunit;
 
@@ -14,12 +14,6 @@ public class MultiTenantIsolationTests
     {
         var connectionString = "Host=aws-1-ap-northeast-1.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.qqpzljuqwsmjrwtmeeqh;Password=88usBoHzggSELc8I;SSL Mode=Require;Trust Server Certificate=true";
 
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(
-                connectionString,
-                o => o.UseVector())
-            .Options;
-
         var userA = Guid.NewGuid();
         var userB = Guid.NewGuid();
 
@@ -27,67 +21,82 @@ public class MultiTenantIsolationTests
         var applicationBId = Guid.NewGuid();
 
         // ------------------------------------------------------------
-        // Everything inside this transaction will be rolled back.
-        // Even if the test fails halfway through, the transaction is
-        // disposed without CommitAsync(), so the database is restored.
+        // ONE physical PostgreSQL connection.
+        //
+        // Every DbContext below uses this same connection, which means
+        // they can all participate in the same transaction.
         // ------------------------------------------------------------
-        await using var transactionDb = new AppDbContext(
-            options,
-            new FakeCurrentUser(userA));
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
 
-        await transactionDb.Database.OpenConnectionAsync();
-
+        // ------------------------------------------------------------
+        // Start ONE transaction.
+        //
+        // Nothing committed inside this transaction survives the test.
+        // ------------------------------------------------------------
         await using var transaction =
-            await transactionDb.Database.BeginTransactionAsync();
+            await connection.BeginTransactionAsync();
 
         try
         {
-            // --------------------------------------------------------
-            // Seed User A's application
-            // --------------------------------------------------------
-            transactionDb.Applications.Add(new Application
-            {
-                Id = applicationAId,
-                UserId = userA,
-                Title = "User A Job",
-                Company = "Company A",
-                RawDescription = "Application belonging to User A",
-                AppliedDate = DateTimeOffset.UtcNow
-            });
+            // ========================================================
+            // SEED DATA
+            // ========================================================
 
-            // --------------------------------------------------------
-            // Seed User B's application
-            //
-            // We temporarily use the same DbContext for seeding.
-            // The global query filter affects queries, not these inserts.
-            // --------------------------------------------------------
-            transactionDb.Applications.Add(new Application
-            {
-                Id = applicationBId,
-                UserId = userB,
-                Title = "User B Job",
-                Company = "Company B",
-                RawDescription = "Application belonging to User B",
-                AppliedDate = DateTimeOffset.UtcNow
-            });
+            var seedOptions = new DbContextOptionsBuilder<AppDbContext>()
+                .UseNpgsql(
+                    connection,
+                    o => o.UseVector())
+                .Options;
 
-            await transactionDb.SaveChangesAsync();
-
-            // --------------------------------------------------------
-            // USER A
-            // --------------------------------------------------------
-            await using (var dbAsUserA = new AppDbContext(
-                options,
+            await using (var seedDb = new AppDbContext(
+                seedOptions,
                 new FakeCurrentUser(userA)))
             {
-                // The second context must participate in the same
-                // transaction/connection to see the uncommitted data.
-                await dbAsUserA.Database.UseTransactionAsync(transaction.GetDbTransaction());
+                await seedDb.Database.UseTransactionAsync(transaction);
 
-                var results =
-                    await dbAsUserA.Applications
-                        .AsNoTracking()
-                        .ToListAsync();
+                seedDb.Applications.AddRange(
+                    new Application
+                    {
+                        Id = applicationAId,
+                        UserId = userA,
+                        Title = "User A Job",
+                        Company = "Company A",
+                        RawDescription = "Application belonging to User A",
+                        AppliedDate = DateTimeOffset.UtcNow
+                    },
+                    new Application
+                    {
+                        Id = applicationBId,
+                        UserId = userB,
+                        Title = "User B Job",
+                        Company = "Company B",
+                        RawDescription = "Application belonging to User B",
+                        AppliedDate = DateTimeOffset.UtcNow
+                    });
+
+                await seedDb.SaveChangesAsync();
+            }
+
+            // ========================================================
+            // USER A
+            // ========================================================
+
+            var userAOptions = new DbContextOptionsBuilder<AppDbContext>()
+                .UseNpgsql(
+                    connection,
+                    o => o.UseVector())
+                .Options;
+
+            await using (var dbAsUserA = new AppDbContext(
+                userAOptions,
+                new FakeCurrentUser(userA)))
+            {
+                await dbAsUserA.Database.UseTransactionAsync(transaction);
+
+                var results = await dbAsUserA.Applications
+                    .AsNoTracking()
+                    .ToListAsync();
 
                 Assert.Single(results);
 
@@ -99,24 +108,43 @@ public class MultiTenantIsolationTests
                     userA,
                     results[0].UserId);
 
+                Assert.Equal(
+                    "User A Job",
+                    results[0].Title);
+
+                // Explicitly make sure User A cannot see User B.
                 Assert.DoesNotContain(
                     results,
-                    a => a.UserId == userB);
+                    application => application.UserId == userB);
+
+                // Direct cross-tenant lookup must also be blocked.
+                var canUserASeeUserB =
+                    await dbAsUserA.Applications
+                        .AsNoTracking()
+                        .AnyAsync(a => a.Id == applicationBId);
+
+                Assert.False(canUserASeeUserB);
             }
 
-            // --------------------------------------------------------
+            // ========================================================
             // USER B
-            // --------------------------------------------------------
+            // ========================================================
+
+            var userBOptions = new DbContextOptionsBuilder<AppDbContext>()
+                .UseNpgsql(
+                    connection,
+                    o => o.UseVector())
+                .Options;
+
             await using (var dbAsUserB = new AppDbContext(
-                options,
+                userBOptions,
                 new FakeCurrentUser(userB)))
             {
-                await dbAsUserB.Database.UseTransactionAsync(transaction.GetDbTransaction());
+                await dbAsUserB.Database.UseTransactionAsync(transaction);
 
-                var results =
-                    await dbAsUserB.Applications
-                        .AsNoTracking()
-                        .ToListAsync();
+                var results = await dbAsUserB.Applications
+                    .AsNoTracking()
+                    .ToListAsync();
 
                 Assert.Single(results);
 
@@ -128,56 +156,32 @@ public class MultiTenantIsolationTests
                     userB,
                     results[0].UserId);
 
+                Assert.Equal(
+                    "User B Job",
+                    results[0].Title);
+
+                // Explicitly make sure User B cannot see User A.
                 Assert.DoesNotContain(
                     results,
-                    a => a.UserId == userA);
-            }
+                    application => application.UserId == userA);
 
-            // --------------------------------------------------------
-            // Explicit cross-tenant ID checks
-            //
-            // Even if the query filter behaves unexpectedly, these
-            // assertions make the security requirement explicit.
-            // --------------------------------------------------------
-
-            await using (var dbAsUserA = new AppDbContext(
-                options,
-                new FakeCurrentUser(userA)))
-            {
-                await dbAsUserA.Database.UseTransactionAsync(transaction.GetDbTransaction());
-
-                var userBCannotReadUserARecord =
-                    await dbAsUserA.Applications
-                        .AsNoTracking()
-                        .AnyAsync(a => a.Id == applicationBId);
-
-                Assert.False(userBCannotReadUserARecord);
-            }
-
-            await using (var dbAsUserB = new AppDbContext(
-                options,
-                new FakeCurrentUser(userB)))
-            {
-                await dbAsUserB.Database.UseTransactionAsync(transaction.GetDbTransaction());
-
-                var userBCannotReadUserARecord =
+                // Direct cross-tenant lookup must also be blocked.
+                var canUserBSeeUserA =
                     await dbAsUserB.Applications
                         .AsNoTracking()
                         .AnyAsync(a => a.Id == applicationAId);
 
-                Assert.False(userBCannotReadUserARecord);
+                Assert.False(canUserBSeeUserA);
             }
 
-            // --------------------------------------------------------
+            // ========================================================
+            // NO COMMIT.
             //
-            // Leaving the transaction uncommitted means all inserted
-            // records disappear when the transaction is disposed.
-            // --------------------------------------------------------
+            // The finally block rolls the transaction back.
+            // ========================================================
         }
         finally
         {
-            // Explicit rollback makes the cleanup obvious and
-            // protects the database even if an assertion fails.
             await transaction.RollbackAsync();
         }
     }
