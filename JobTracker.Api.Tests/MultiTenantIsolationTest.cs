@@ -13,8 +13,13 @@ public class MultiTenantIsolationTests
     [Fact]
     public async Task UserBCannotSeeUserAsApplications()
     {
+        //test server
+        var connectionString = "Host=aws-1-ap-northeast-1.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.qqpzljuqwsmjrwtmeeqh;Password=88usBoHzggSELc8I;SSL Mode=Require;Trust Server Certificate=true";
+
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .UseNpgsql(
+                connectionString,
+                o => o.UseVector())
             .Options;
 
         var userA = Guid.NewGuid();
