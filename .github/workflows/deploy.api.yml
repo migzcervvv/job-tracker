@@ -6,6 +6,7 @@ on:
     paths:
       - "JobTracker.Api/**"
       - "global.json"
+      - "JobTracker.Api.Tests/**"
 
 jobs:
   build-test-deploy:
