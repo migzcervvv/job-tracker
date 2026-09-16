@@ -1,15 +1,20 @@
-import { api } from './client.js';
+import { api } from "./client.js";
 
 export async function listApplications() {
-  const { data } = await api.get('/api/applications');
+  const { data } = await api.get("/api/applications");
   return data;
 }
 
 // Response shape changed: { application, wasDuplicate, automationTriggered }
 // — the API now detects accidental resubmits and returns the existing row
 // instead of erroring, and reports whether skill extraction was fired.
-export async function createApplication({ title, company, jobUrl, rawDescription }) {
-  const { data } = await api.post('/api/applications', {
+export async function createApplication({
+  title,
+  company,
+  jobUrl,
+  rawDescription,
+}) {
+  const { data } = await api.post("/api/applications", {
     title,
     company,
     jobUrl,
@@ -19,7 +24,9 @@ export async function createApplication({ title, company, jobUrl, rawDescription
 }
 
 export async function updateApplicationStatus(id, status) {
-  const { data } = await api.patch(`/api/applications/${id}/status`, { status });
+  const { data } = await api.patch(`/api/applications/${id}/status`, {
+    status,
+  });
   return data;
 }
 
@@ -29,7 +36,10 @@ export async function getApplication(id) {
 }
 
 export async function upsertStageDetail(id, stage, fields) {
-  const { data } = await api.put(`/api/applications/${id}/stage-details`, { stage, fields });
+  const { data } = await api.put(`/api/applications/${id}/stage-details`, {
+    stage,
+    fields,
+  });
   return data;
 }
 
@@ -45,6 +55,9 @@ export async function getAutomationStatus(id) {
 // Triggers n8n interview-question generation for one application.
 // Fire-and-forget on the server; poll getApplication() for prepNotes.
 export async function generateInterviewQuestions(id, round) {
-  const { data } = await api.post(`/api/applications/${id}/interview-questions`, { round });
+  const { data } = await api.post(
+    `/api/applications/${id}/interview-questions`,
+    { round },
+  );
   return data;
 }
