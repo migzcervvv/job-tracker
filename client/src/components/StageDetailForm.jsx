@@ -47,7 +47,11 @@ function FieldInput({ field, value, onChange }) {
   );
 }
 
-export function StageDetailForm({ applicationId, stage, initialFields, onSaved }) {
+// appendsNewRound: true only for the one slot whose job is to create the
+// NEXT interview round. Editing an existing round (past or current) must
+// never trigger the clear-after-save behavior, or the just-saved data
+// would vanish from under the user.
+export function StageDetailForm({ applicationId, stage, initialFields, onSaved, appendsNewRound = false }) {
   const fieldDefs = STAGE_FIELDS[stage];
   const [values, setValues] = useState(initialFields ?? {});
   const [submitting, setSubmitting] = useState(false);
@@ -68,7 +72,7 @@ export function StageDetailForm({ applicationId, stage, initialFields, onSaved }
         error: (err) => extractErrorMessage(err, 'Could not save'),
       });
       onSaved(saved);
-      if (stage === STATUS.InterviewScheduled) setValues({}); // next save = a new round
+      if (appendsNewRound) setValues({}); // this slot just created a round — clear it for the next one
     } catch {
       // toast already shown
     } finally {
@@ -81,7 +85,6 @@ export function StageDetailForm({ applicationId, stage, initialFields, onSaved }
       <div className="stage-form-grid">
         {fieldDefs.map((f) => {
           const spanFull = FULL_WIDTH_TYPES.has(f.type);
-          // Checkbox renders its own label inline — skip the standard field wrapper for it.
           if (f.type === 'checkbox') {
             return (
               <div className="field span-2" key={f.key}>
@@ -99,7 +102,7 @@ export function StageDetailForm({ applicationId, stage, initialFields, onSaved }
       </div>
 
       <div className="stage-form-actions">
-        {stage === STATUS.InterviewScheduled && (
+        {appendsNewRound && (
           <span className="stage-form-hint">Saving adds a new round — it won't overwrite the last one.</span>
         )}
         <button className="btn-save" type="submit" disabled={submitting}>

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   DndContext,
   DragOverlay,
@@ -7,30 +7,29 @@ import {
   useSensor,
   useSensors,
   closestCenter,
-} from '@dnd-kit/core';
-import { Layout } from '../components/Layout.jsx';
-import { KanbanColumn } from '../components/KanbanColumn.jsx';
-import { DetailModal } from '../components/DetailModal.jsx';
-import { updateApplicationStatus } from '../api/applications.js';
-import { STATUS_META, statusMeta } from '../api/statusMeta.js';
-import { extractErrorMessage } from '../api/errors.js';
-import { notify } from '../notify.js';
-import { useApplications } from '../state/ApplicationsContext.jsx';
+} from "@dnd-kit/core";
+import { Layout } from "../components/Layout.jsx";
+import { KanbanColumn } from "../components/KanbanColumn.jsx";
+import { updateApplicationStatus } from "../api/applications.js";
+import { STATUS_META, statusMeta } from "../api/statusMeta.js";
+import { extractErrorMessage } from "../api/errors.js";
+import { notify } from "../notify.js";
+import { useApplications } from "../state/ApplicationsContext.jsx";
 
 const ACTIVE_STATUSES = STATUS_META.filter((s) => !s.terminal);
 const CLOSED_STATUSES = STATUS_META.filter((s) => s.terminal);
 
 export function Dashboard() {
-  const { applications, loadFailed, updateApplication, removeApplication } = useApplications();
-  const [view, setView] = useState('active');
+  const { applications, loadFailed, updateApplication } = useApplications();
+  const navigate = useNavigate();
+  const [view, setView] = useState("active");
   const [activeId, setActiveId] = useState(null);
-  const [openApplicationId, setOpenApplicationId] = useState(null);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
-  const columns = view === 'active' ? ACTIVE_STATUSES : CLOSED_STATUSES;
+  const columns = view === "active" ? ACTIVE_STATUSES : CLOSED_STATUSES;
 
   const byStatus = useMemo(() => {
     const map = {};
@@ -41,11 +40,8 @@ export function Dashboard() {
     return map;
   }, [applications]);
 
-  const activeApplication = applications?.find((a) => a.id === activeId) ?? null;
-  // Derived from the shared store, not a local snapshot — so the modal
-  // reflects a status change immediately, whether it came from the
-  // dropdown, a drag, or any other page that touches the same store.
-  const openApplication = applications?.find((a) => a.id === openApplicationId) ?? null;
+  const activeApplication =
+    applications?.find((a) => a.id === activeId) ?? null;
 
   async function moveApplication(applicationId, newStatus) {
     const current = applications.find((a) => a.id === applicationId);
@@ -59,7 +55,7 @@ export function Dashboard() {
       notify.success(`Moved to ${statusMeta(newStatus).label}`);
     } catch (err) {
       updateApplication(applicationId, { status: previousStatus });
-      notify.error('Could not move the card', extractErrorMessage(err));
+      notify.error("Could not move the card", extractErrorMessage(err));
     }
   }
 
@@ -74,10 +70,6 @@ export function Dashboard() {
     moveApplication(active.id, over.id);
   }
 
-  function handleApplicationDeleted(applicationId) {
-    removeApplication(applicationId);
-  }
-
   return (
     <Layout
       title="Board"
@@ -85,31 +77,35 @@ export function Dashboard() {
         <>
           <div className="view-toggle">
             <button
-              className={view === 'active' ? 'active' : ''}
-              onClick={() => setView('active')}
+              className={view === "active" ? "active" : ""}
+              onClick={() => setView("active")}
             >
               Active
             </button>
             <button
-              className={view === 'closed' ? 'active' : ''}
-              onClick={() => setView('closed')}
+              className={view === "closed" ? "active" : ""}
+              onClick={() => setView("closed")}
             >
               Closed
             </button>
           </div>
-          <Link to="/applications/new" className="icon-btn" style={{ textDecoration: 'none' }}>
+          <Link
+            to="/applications/new"
+            className="icon-btn"
+            style={{ textDecoration: "none" }}
+          >
             New application
           </Link>
         </>
       }
     >
       {applications === null && !loadFailed && (
-        <p style={{ color: 'var(--text-dim)' }}>Loading…</p>
+        <p style={{ color: "var(--text-dim)" }}>Loading…</p>
       )}
 
       {loadFailed && (
         <div className="panel">
-          <p style={{ margin: 0, color: 'var(--text-dim)' }}>
+          <p style={{ margin: 0, color: "var(--text-dim)" }}>
             The board couldn't load. Refresh to try again.
           </p>
         </div>
@@ -117,9 +113,10 @@ export function Dashboard() {
 
       {applications !== null && applications.length === 0 && (
         <div className="panel">
-          <p style={{ margin: 0, color: 'var(--text-dim)' }}>
-            No applications yet. <Link to="/applications/new">Paste your first job description</Link> to
-            start the pipeline.
+          <p style={{ margin: 0, color: "var(--text-dim)" }}>
+            No applications yet.{" "}
+            <Link to="/applications/new">Paste your first job description</Link>{" "}
+            to start the pipeline.
           </p>
         </div>
       )}
@@ -137,7 +134,7 @@ export function Dashboard() {
                 key={s.value}
                 meta={s}
                 applications={byStatus[s.value]}
-                onOpenApplication={(a) => setOpenApplicationId(a.id)}
+                onOpenApplication={(a) => navigate(`/applications/${a.id}`)}
               />
             ))}
           </div>
@@ -148,19 +145,14 @@ export function Dashboard() {
                 <div className="row-top">
                   <span className="title">{activeApplication.title}</span>
                 </div>
-                <div className="company">{activeApplication.company || 'No company set'}</div>
+                <div className="company">
+                  {activeApplication.company || "No company set"}
+                </div>
               </div>
             )}
           </DragOverlay>
         </DndContext>
       )}
-
-      <DetailModal
-        application={openApplication}
-        onClose={() => setOpenApplicationId(null)}
-        onStatusChange={moveApplication}
-        onDeleted={handleApplicationDeleted}
-      />
     </Layout>
   );
 }

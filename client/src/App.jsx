@@ -15,6 +15,11 @@ const NewApplication = lazy(() =>
     default: m.NewApplication,
   })),
 );
+const ApplicationDetail = lazy(() =>
+  import("./pages/ApplicationDetail.jsx").then((m) => ({
+    default: m.ApplicationDetail,
+  })),
+);
 const Alerts = lazy(() =>
   import("./pages/Alerts.jsx").then((m) => ({ default: m.Alerts })),
 );
@@ -69,6 +74,7 @@ export default function App() {
             <Route element={<ProtectedRoute />}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/applications/new" element={<NewApplication />} />
+              <Route path="/applications/:id" element={<ApplicationDetail />} />
               <Route path="/alerts" element={<Alerts />} />
               <Route path="/skills-gap" element={<SkillsGap />} />
               <Route path="/skills" element={<MySkills />} />
