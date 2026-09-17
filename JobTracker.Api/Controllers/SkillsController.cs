@@ -46,25 +46,65 @@ public class SkillsController(AppDbContext db) : ControllerBase
     [HttpGet("me/skills")]
     public async Task<IActionResult> GetMySkills()
     {
-        var names = await db.UserSkills
+        var skills = await db.UserSkills
             .Where(us => us.UserId == CurrentUserId)
-            .Select(us => us.Skill!.Name)
+            .OrderBy(us => us.Skill!.Name)
+            .Select(us => new UserSkillDto(us.Skill!.Name, (int)us.Level))
             .ToListAsync();
-        return Ok(names);
+
+        return Ok(skills);
     }
 
+    // Replaces the full skill-name set. Levels are preserved for names that
+    // survive the replace; anything brand new starts Unrated. This is what
+    // keeps a level from silently resetting to 0 every time a skill is
+    // added or removed through the flat-name endpoint (resume confirm flow
+    // included).
     [HttpPut("me/skills")]
     public async Task<IActionResult> SetMySkills([FromBody] SetSkillsRequest req)
     {
         var skills = await ResolveSkillsAsync(req.SkillNames);
 
         var existingLinks = await db.UserSkills.Where(us => us.UserId == CurrentUserId).ToListAsync();
+        var levelBySkillId = existingLinks.ToDictionary(l => l.SkillId, l => l.Level);
+
         db.UserSkills.RemoveRange(existingLinks);
         foreach (var skill in skills)
-            db.UserSkills.Add(new UserSkill { UserId = CurrentUserId, SkillId = skill.Id });
+        {
+            db.UserSkills.Add(new UserSkill
+            {
+                UserId = CurrentUserId,
+                SkillId = skill.Id,
+                Level = levelBySkillId.TryGetValue(skill.Id, out var lvl) ? lvl : SkillLevel.Unrated,
+            });
+        }
 
         await db.SaveChangesAsync();
-        return Ok(skills.Select(s => s.Name));
+
+        return Ok(skills
+            .OrderBy(s => s.Name)
+            .Select(s => new UserSkillDto(s.Name, (int)(levelBySkillId.TryGetValue(s.Id, out var lvl2) ? lvl2 : SkillLevel.Unrated))));
+    }
+
+    // Sets proficiency on one already-claimed skill. Separate from
+    // SetMySkills so the level control on the Skills page can save
+    // instantly per-row without resubmitting the whole skill list.
+    [HttpPut("me/skills/level")]
+    public async Task<IActionResult> SetSkillLevel([FromBody] SetSkillLevelRequest req)
+    {
+        if (!Enum.IsDefined(typeof(SkillLevel), req.Level))
+            return BadRequest("Unknown skill level.");
+
+        var normalized = req.Name.Trim().ToLowerInvariant();
+        var link = await db.UserSkills
+            .FirstOrDefaultAsync(us => us.UserId == CurrentUserId && us.Skill!.Name == normalized);
+
+        if (link is null) return NotFound();
+
+        link.Level = (SkillLevel)req.Level;
+        await db.SaveChangesAsync();
+
+        return Ok(new UserSkillDto(normalized, req.Level));
     }
 
     [HttpPut("applications/{id}/skills")]

@@ -1701,3 +1701,89 @@ select {
   gap: 12px;
   margin-bottom: 8px;
 }
+
+.skills-page-hint {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-top: 0;
+  margin-bottom: 20px;
+  max-width: 640px;
+}
+
+.skill-level-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skill-level-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.skill-level-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-level-control {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.skill-level-btn {
+  background: none;
+  border: none;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.skill-level-btn + .skill-level-btn {
+  border-left: 1px solid var(--line);
+}
+
+.skill-level-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.skill-level-btn.active {
+  background: rgba(232, 163, 61, 0.14);
+  color: var(--accent);
+}
+
+.skill-level-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (max-width: 560px) {
+  .skill-level-row {
+    flex-wrap: wrap;
+  }
+  .skill-level-control {
+    order: 3;
+    width: 100%;
+  }
+  .skill-level-btn {
+    flex: 1;
+  }
+}

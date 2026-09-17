@@ -17,6 +17,15 @@ public class ApplicationSkill
     public int Importance { get; set; } // 3 = required, 2 = preferred, 1 = nice_to_have
 }
 
+public enum SkillLevel
+{
+    Unrated = 0,
+    Beginner = 1,
+    Intermediate = 2,
+    Advanced = 3,
+    Expert = 4,
+}
+
 // Models/UserSkill.cs
 public class UserSkill
 {
@@ -25,4 +34,5 @@ public class UserSkill
     public Skill? Skill { get; set; }
     public string? EvidenceText { get; set; }
     public double EvidenceStrength { get; set; } // 0.0–1.0
+    public SkillLevel Level { get; set; } = SkillLevel.Unrated;
 }
