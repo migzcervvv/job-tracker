@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Layout } from "../components/Layout.jsx";
-import { StageDetailForm } from "../components/StageDetailForm.jsx";
+import { StageAccordion } from "../components/StageAccordion.jsx";
 import { TagEditor } from "../components/TagEditor.jsx";
 import { STATUS, STATUS_META, statusMeta } from "../api/statusMeta.js";
 import { STAGE_FIELDS } from "../api/stageFields.js";
@@ -34,24 +34,15 @@ function formatDate(dateString) {
   });
 }
 
-function parseFields(fieldsJson) {
-  try {
-    return JSON.parse(fieldsJson);
-  } catch {
-    return {};
-  }
-}
-
-// Builds one entry per stage-detail record, in pipeline order, each
-// carrying whether it's currently editable:
-//  - the current stage — always editable (create-or-edit)
-//  - a past stage with a saved record — editable (this is the new bit)
-//  - a past stage with nothing saved — "No details recorded", locked
-//  - a future stage — "Not reached yet", locked
+// One entry per stage-detail record, in pipeline order, each carrying
+// whether it's editable and whether it should default open:
+//  - current stage — editable, opens expanded (nothing to hide yet)
+//  - past stage with a saved record — editable, collapsed by default
+//  - past stage with nothing saved — "No details recorded", locked
+//  - future stage — "Not reached yet", locked
 //  - anything, once the application is closed — editable
-// Interview rounds are their own entries (one row per round, oldest
-// first), plus one extra "add a new round" slot while sitting on that
-// stage.
+// Interview rounds are their own entries (oldest first), plus one extra
+// "add a new round" slot while sitting on that stage.
 function buildStageEntries(stageDetails, currentStatus) {
   const isClosed = statusMeta(currentStatus).terminal;
   const byStage = new Map();
@@ -79,6 +70,7 @@ function buildStageEntries(stageDetails, currentStatus) {
           record: null,
           editable: true,
           roundLabel: null,
+          defaultExpanded: true,
         });
       } else if (STAGE_FIELDS[stageValue]) {
         const isPast = rankOf(stageValue) < rankOf(currentStatus) || isClosed;
@@ -91,6 +83,7 @@ function buildStageEntries(stageDetails, currentStatus) {
             ? "No details recorded for this stage."
             : "Not reached yet.",
           roundLabel: null,
+          defaultExpanded: false,
         });
       }
       continue;
@@ -99,12 +92,16 @@ function buildStageEntries(stageDetails, currentStatus) {
     records.forEach((record, i) => {
       const roundLabel =
         stageValue === STATUS.InterviewScheduled ? `Round ${i + 1}` : null;
-      entries.push({ stage: stageValue, record, editable, roundLabel });
+      entries.push({
+        stage: stageValue,
+        record,
+        editable,
+        roundLabel,
+        defaultExpanded: stageValue === currentStatus,
+      });
     });
   }
 
-  // The current round being prepared for — only while actually sitting on
-  // this stage, so a round can't be fabricated after the fact.
   if (currentStatus === STATUS.InterviewScheduled) {
     const existingRounds = byStage.get(STATUS.InterviewScheduled)?.length ?? 0;
     entries.push({
@@ -113,10 +110,10 @@ function buildStageEntries(stageDetails, currentStatus) {
       editable: true,
       roundLabel: `Round ${existingRounds + 1}`,
       isNewRound: true,
+      defaultExpanded: existingRounds === 0,
     });
   }
 
-  // The terminal stage the application actually closed on (if any).
   if (isClosed && STAGE_FIELDS[currentStatus]) {
     const records = byStage.get(currentStatus) ?? [];
     if (records.length > 0) {
@@ -126,6 +123,7 @@ function buildStageEntries(stageDetails, currentStatus) {
           record,
           editable: true,
           roundLabel: null,
+          defaultExpanded: true,
         }),
       );
     } else {
@@ -134,36 +132,12 @@ function buildStageEntries(stageDetails, currentStatus) {
         record: null,
         editable: true,
         roundLabel: null,
+        defaultExpanded: true,
       });
     }
   }
 
   return entries;
-}
-
-function renderReadOnlyFields(stage, fields) {
-  const defs = STAGE_FIELDS[stage] ?? [];
-  const populated = defs.filter(
-    (f) =>
-      fields[f.key] !== undefined &&
-      fields[f.key] !== "" &&
-      fields[f.key] !== false,
-  );
-  if (populated.length === 0) {
-    return <p className="stage-entry-empty">No details recorded.</p>;
-  }
-  return (
-    <dl className="stage-readonly-list">
-      {populated.map((f) => (
-        <div key={f.key} className="stage-readonly-row">
-          <dt>{f.label}</dt>
-          <dd>
-            {typeof fields[f.key] === "boolean" ? "Yes" : String(fields[f.key])}
-          </dd>
-        </div>
-      ))}
-    </dl>
-  );
 }
 
 function StageTrack({ status }) {
@@ -236,7 +210,7 @@ export function ApplicationDetail() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [generatingRound, setGeneratingRound] = useState(null);
-
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const skillsRefetchedRef = useRef(false);
   const questionsPollRef = useRef(null);
 
@@ -248,6 +222,7 @@ export function ApplicationDetail() {
     setStageDetails(null);
     setRequiredSkills(null);
     setConfirmingDelete(false);
+    setDescriptionExpanded(false);
 
     getApplication(id)
       .then((data) => {
@@ -285,9 +260,6 @@ export function ApplicationDetail() {
     };
   }, [id]);
 
-  // Skill extraction runs asynchronously in n8n, typically a few seconds
-  // behind the create request itself. Poll until it resolves so the user
-  // sees "extracting…" rather than an empty tag editor with no explanation.
   useEffect(() => {
     if (!application) return;
     let cancelled = false;
@@ -361,11 +333,6 @@ export function ApplicationDetail() {
     }
   }
 
-  // The real fix for "generated but never shown": the trigger call only
-  // confirms the webhook reached n8n, not that n8n's LLM call + callback
-  // finished. So instead of trusting that status, poll this application
-  // until its timeline actually grows (the callback logs a timeline event
-  // the moment prepNotes gets updated), then pull the fresh data in.
   function startQuestionsPoll(baselineTimelineCount) {
     if (questionsPollRef.current) clearInterval(questionsPollRef.current);
     let attempts = 0;
@@ -381,7 +348,10 @@ export function ApplicationDetail() {
           clearInterval(questionsPollRef.current);
           questionsPollRef.current = null;
           setGeneratingRound(null);
-          notify.success("Questions ready", "Check Prep notes below.");
+          notify.success(
+            "Questions ready",
+            "Open the round below to see them.",
+          );
           return;
         }
       } catch {
@@ -565,8 +535,32 @@ export function ApplicationDetail() {
       )}
 
       <div className="section-label">Job description</div>
-      <div className="jd-block" style={{ marginBottom: 20 }}>
-        {application.rawDescription || "No description saved."}
+
+      <div className={`jd-block ${descriptionExpanded ? "is-expanded" : ""}`}>
+        <div className="jd-content">
+          {application.rawDescription || "No description saved."}
+        </div>
+
+        {application.rawDescription && (
+          <button
+            type="button"
+            className="jd-toggle"
+            onClick={() => setDescriptionExpanded((prev) => !prev)}
+            aria-expanded={descriptionExpanded}
+          >
+            <span>
+              {descriptionExpanded ? "Show less" : "Read full description"}
+            </span>
+            <span
+              className={`jd-toggle-chevron ${
+                descriptionExpanded ? "is-open" : ""
+              }`}
+              aria-hidden="true"
+            >
+              ↓
+            </span>
+          </button>
+        )}
       </div>
 
       <div style={{ marginBottom: 20 }}>
@@ -591,70 +585,16 @@ export function ApplicationDetail() {
           </div>
 
           {stageEntries.map((entry, i) => (
-            <div
-              className="stage-entry"
+            <StageAccordion
               key={`${entry.stage}-${entry.record?.id ?? entry.roundLabel ?? i}`}
-            >
-              <div className="stage-entry-head">
-                <span className="stage-entry-label">
-                  {statusMeta(entry.stage).label}
-                  {entry.roundLabel ? ` — ${entry.roundLabel}` : ""}
-                </span>
-                {entry.record && (
-                  <span className="stage-entry-time">
-                    {relativeTime(entry.record.createdAt)}
-                  </span>
-                )}
-                {entry.isNewRound && (
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() =>
-                      handleGenerateQuestions(
-                        entry.roundLabel.replace("Round ", ""),
-                      )
-                    }
-                    disabled={generatingRound !== null}
-                    title="Generates likely questions from this job description and your resume, into Prep notes"
-                  >
-                    {generatingRound !== null
-                      ? "Working…"
-                      : "Suggest questions"}
-                  </button>
-                )}
-                {!entry.editable && !entry.empty && (
-                  <span
-                    className="stage-entry-lock"
-                    title="Locked until this application reaches this stage"
-                  >
-                    Locked
-                  </span>
-                )}
-              </div>
-
-              {entry.empty ? (
-                <p className="stage-entry-empty">{entry.placeholderText}</p>
-              ) : entry.editable ? (
-                <StageDetailForm
-                  key={
-                    entry.record?.id ??
-                    `new-${entry.stage}-${entry.roundLabel ?? ""}`
-                  }
-                  applicationId={application.id}
-                  stage={entry.stage}
-                  initialFields={
-                    entry.record ? parseFields(entry.record.fieldsJson) : {}
-                  }
-                  onSaved={handleStageSaved}
-                  appendsNewRound={Boolean(entry.isNewRound)}
-                />
-              ) : (
-                renderReadOnlyFields(
-                  entry.stage,
-                  parseFields(entry.record.fieldsJson),
-                )
-              )}
-            </div>
+              entry={entry}
+              applicationId={application.id}
+              onSaved={handleStageSaved}
+              onGenerateQuestions={
+                entry.isNewRound ? handleGenerateQuestions : null
+              }
+              generatingRound={generatingRound}
+            />
           ))}
         </div>
       )}

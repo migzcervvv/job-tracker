@@ -1,30 +1,37 @@
-import { useState } from 'react';
-import { STAGE_FIELDS } from '../api/stageFields.js';
-import { upsertStageDetail } from '../api/applications.js';
-import { extractErrorMessage } from '../api/errors.js';
-import { notify } from '../notify.js';
-import { STATUS } from '../api/statusMeta.js';
+import { useState } from "react";
+import { STAGE_FIELDS } from "../api/stageFields.js";
+import { upsertStageDetail } from "../api/applications.js";
+import { extractErrorMessage } from "../api/errors.js";
+import { notify } from "../notify.js";
+import { STATUS } from "../api/statusMeta.js";
 
-// Long-form inputs get the full row; short ones sit two-up in the grid.
-const FULL_WIDTH_TYPES = new Set(['textarea', 'url', 'checkbox']);
+const FULL_WIDTH_TYPES = new Set(["textarea", "url", "checkbox"]);
 
 function FieldInput({ field, value, onChange }) {
-  if (field.type === 'textarea') {
-    return <textarea rows={3} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+  if (field.type === "textarea") {
+    return (
+      <textarea
+        rows={3}
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    );
   }
 
-  if (field.type === 'select') {
+  if (field.type === "select") {
     return (
-      <select value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
+      <select value={value ?? ""} onChange={(e) => onChange(e.target.value)}>
         <option value="">—</option>
         {field.options.map((opt) => (
-          <option key={opt} value={opt}>{opt}</option>
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
         ))}
       </select>
     );
   }
 
-  if (field.type === 'checkbox') {
+  if (field.type === "checkbox") {
     return (
       <div className="field-checkbox">
         <input
@@ -41,17 +48,29 @@ function FieldInput({ field, value, onChange }) {
   return (
     <input
       type={field.type}
-      value={value ?? ''}
+      value={value ?? ""}
       onChange={(e) => onChange(e.target.value)}
     />
   );
 }
 
+// stageDetailId: pass the record's id when this instance is editing an
+// existing entry in place. Leave null when creating (current-stage
+// first save, or a brand-new interview round) — see the backend note in
+// ApplicationsController.UpsertStageDetail for why this matters.
+//
 // appendsNewRound: true only for the one slot whose job is to create the
-// NEXT interview round. Editing an existing round (past or current) must
-// never trigger the clear-after-save behavior, or the just-saved data
-// would vanish from under the user.
-export function StageDetailForm({ applicationId, stage, initialFields, onSaved, appendsNewRound = false }) {
+// NEXT interview round. Editing an existing round must never clear the
+// form after saving.
+export function StageDetailForm({
+  applicationId,
+  stage,
+  initialFields,
+  onSaved,
+  appendsNewRound = false,
+  stageDetailId = null,
+  onCancel = null,
+}) {
   const fieldDefs = STAGE_FIELDS[stage];
   const [values, setValues] = useState(initialFields ?? {});
   const [submitting, setSubmitting] = useState(false);
@@ -66,11 +85,17 @@ export function StageDetailForm({ applicationId, stage, initialFields, onSaved, 
     e.preventDefault();
     setSubmitting(true);
     try {
-      const saved = await notify.promise(upsertStageDetail(applicationId, stage, values), {
-        loading: 'Saving…',
-        success: stage === STATUS.InterviewScheduled ? 'Round saved' : 'Stage details saved',
-        error: (err) => extractErrorMessage(err, 'Could not save'),
-      });
+      const saved = await notify.promise(
+        upsertStageDetail(applicationId, stage, values, stageDetailId),
+        {
+          loading: "Saving…",
+          success:
+            stage === STATUS.InterviewScheduled
+              ? "Round saved"
+              : "Stage details saved",
+          error: (err) => extractErrorMessage(err, "Could not save"),
+        },
+      );
       onSaved(saved);
       if (appendsNewRound) setValues({}); // this slot just created a round — clear it for the next one
     } catch {
@@ -85,17 +110,25 @@ export function StageDetailForm({ applicationId, stage, initialFields, onSaved, 
       <div className="stage-form-grid">
         {fieldDefs.map((f) => {
           const spanFull = FULL_WIDTH_TYPES.has(f.type);
-          if (f.type === 'checkbox') {
+          if (f.type === "checkbox") {
             return (
               <div className="field span-2" key={f.key}>
-                <FieldInput field={f} value={values[f.key]} onChange={(v) => setField(f.key, v)} />
+                <FieldInput
+                  field={f}
+                  value={values[f.key]}
+                  onChange={(v) => setField(f.key, v)}
+                />
               </div>
             );
           }
           return (
-            <div className={`field${spanFull ? ' span-2' : ''}`} key={f.key}>
+            <div className={`field${spanFull ? " span-2" : ""}`} key={f.key}>
               <label>{f.label}</label>
-              <FieldInput field={f} value={values[f.key]} onChange={(v) => setField(f.key, v)} />
+              <FieldInput
+                field={f}
+                value={values[f.key]}
+                onChange={(v) => setField(f.key, v)}
+              />
             </div>
           );
         })}
@@ -103,14 +136,26 @@ export function StageDetailForm({ applicationId, stage, initialFields, onSaved, 
 
       <div className="stage-form-actions">
         {appendsNewRound && (
-          <span className="stage-form-hint">Saving adds a new round — it won't overwrite the last one.</span>
+          <span className="stage-form-hint">
+            Saving adds a new round — it won't overwrite the last one.
+          </span>
+        )}
+        {onCancel && (
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={onCancel}
+            disabled={submitting}
+          >
+            Cancel
+          </button>
         )}
         <button className="btn-save" type="submit" disabled={submitting}>
           {submitting
-            ? 'Saving…'
+            ? "Saving…"
             : stage === STATUS.InterviewScheduled
-              ? 'Save round'
-              : 'Save stage details'}
+              ? "Save round"
+              : "Save stage details"}
         </button>
       </div>
     </form>

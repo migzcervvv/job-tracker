@@ -31,7 +31,7 @@ public record ApplicationDetailResponse(
     List<StageDetailResponse> StageDetails
 );
 
-public record UpsertStageDetailRequest(ApplicationStatus Stage, Dictionary<string, object?> Fields);
+public record UpsertStageDetailRequest(ApplicationStatus Stage, Dictionary<string, object?> Fields, Guid? StageDetailId = null);
 public record StageDetailResponse(Guid Id, ApplicationStatus Stage, string FieldsJson, DateTimeOffset CreatedAt);
 public record SetSkillsRequest(List<string> SkillNames);
 public record SkillGapItem(string Name, int Frequency, bool IHaveIt, int Trend, double AvgImportance); 

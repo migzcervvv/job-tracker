@@ -140,7 +140,9 @@ public class AdminController(
         if (!string.IsNullOrWhiteSpace(search))
             all = all.Where(s => s.Name.Contains(search, StringComparison.OrdinalIgnoreCase));
 
-        var ordered = all.OrderByDescending(s => s.applicationUsage + s.userUsage).ToList();
+        var ordered = all
+            .OrderBy(s => s.Name)
+            .ToList();
         var totalCount = ordered.Count;
         var pageItems = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 

@@ -212,31 +212,45 @@ public class ApplicationsController(AppDbContext db,
         return Ok(response);
     }
 
-    [HttpPut("{id}/stage-details")]
-    public async Task<IActionResult> UpsertStageDetail(Guid id, [FromBody] UpsertStageDetailRequest req)
+[HttpPut("{id}/stage-details")]
+public async Task<IActionResult> UpsertStageDetail(Guid id, [FromBody] UpsertStageDetailRequest req)
+{
+    var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
+    if (app is null) return NotFound();
+
+    var fieldsJson = JsonSerializer.Serialize(req.Fields);
+
+    StageDetail? target;
+    if (req.StageDetailId is Guid targetId)
     {
-        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
-        if (app is null) return NotFound();
-
-        var fieldsJson = JsonSerializer.Serialize(req.Fields);
-
-        // Every stage gets one record you overwrite — except InterviewScheduled,
-        // which appends a new row per round (per §5.1 of the build guide).
-        StageDetail? target = req.Stage == ApplicationStatus.InterviewScheduled
-            ? null
-            : await db.StageDetails.FirstOrDefaultAsync(s => s.ApplicationId == id && s.Stage == req.Stage);
-
-        if (target is null)
-        {
-            target = new StageDetail { Id = Guid.NewGuid(), ApplicationId = id, Stage = req.Stage };
-            db.StageDetails.Add(target);
-        }
-
-        target.FieldsJson = fieldsJson;
-        await db.SaveChangesAsync();
-
-        return Ok(new StageDetailResponse(target.Id, target.Stage, target.FieldsJson, target.CreatedAt));
+        // Editing one specific existing record — e.g. a past interview
+        // round. Takes priority over the stage-based lookup below so an
+        // edit never falls through to "create new".
+        target = await db.StageDetails.FirstOrDefaultAsync(s => s.Id == targetId && s.ApplicationId == id);
+        if (target is null) return NotFound();
     }
+    else if (req.Stage == ApplicationStatus.InterviewScheduled)
+    {
+        // No id supplied for an interview-round save means "this is a new round".
+        target = null;
+    }
+    else
+    {
+        // Every non-interview stage has exactly one record — overwrite it.
+        target = await db.StageDetails.FirstOrDefaultAsync(s => s.ApplicationId == id && s.Stage == req.Stage);
+    }
+
+    if (target is null)
+    {
+        target = new StageDetail { Id = Guid.NewGuid(), ApplicationId = id, Stage = req.Stage };
+        db.StageDetails.Add(target);
+    }
+
+    target.FieldsJson = fieldsJson;
+    await db.SaveChangesAsync();
+
+    return Ok(new StageDetailResponse(target.Id, target.Stage, target.FieldsJson, target.CreatedAt));
+}
     // ApplicationsController.cs — new action
     [HttpGet("{id}/automation-status")]
     public async Task<IActionResult> GetAutomationStatus(Guid id)
