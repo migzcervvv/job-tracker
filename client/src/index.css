@@ -1189,7 +1189,59 @@ select {
     transform: rotate(360deg);
   }
 }
+/* ---------- Skills extraction (in-progress, no result yet) ---------- */
 
+.skills-extracting {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.skills-extracting .automation-spinner {
+  margin-top: 2px;
+}
+
+.skills-extracting-chips {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.skills-extracting-chip {
+  height: 24px;
+  width: 70px;
+  border-radius: 20px;
+  background: linear-gradient(
+    90deg,
+    var(--panel) 25%,
+    var(--line) 50%,
+    var(--panel) 75%
+  );
+  background-size: 200% 100%;
+  animation: skills-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skills-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skills-extracting-chip {
+    animation: none;
+  }
+}
 /* ---------- Login ---------- */
 
 .login-screen {

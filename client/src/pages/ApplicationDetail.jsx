@@ -174,15 +174,6 @@ function StageTrack({ status }) {
 function AutomationStatusBanner({ automationStatus }) {
   if (!automationStatus || !automationStatus.status) return null;
 
-  if (automationStatus.status === "triggered") {
-    return (
-      <div className="automation-banner automation-banner-pending">
-        <span className="automation-spinner" />
-        Extracting skills from the job description…
-      </div>
-    );
-  }
-
   if (automationStatus.status === "failed") {
     return (
       <div className="automation-banner automation-banner-failed">
@@ -194,6 +185,24 @@ function AutomationStatusBanner({ automationStatus }) {
   }
 
   return null;
+}
+
+// Shown in place of the tag editor while n8n hasn't reported success or
+// failure yet. Skeleton chips signal "skills are coming", not "no skills".
+function SkillsExtractingIndicator() {
+  return (
+    <div className="skills-extracting">
+      <span className="automation-spinner" />
+      <div>
+        <div>Extracting skills from the job description…</div>
+        <div className="skills-extracting-chips">
+          <span className="skills-extracting-chip" />
+          <span className="skills-extracting-chip" style={{ width: 90 }} />
+          <span className="skills-extracting-chip" style={{ width: 60 }} />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function ApplicationDetail() {
@@ -427,6 +436,8 @@ export function ApplicationDetail() {
     application.status,
   );
 
+  const isExtracting = automationStatus?.status === "triggered";
+
   return (
     <Layout
       title={application.title}
@@ -565,16 +576,20 @@ export function ApplicationDetail() {
 
       <div style={{ marginBottom: 20 }}>
         <div className="section-label">Required skills</div>
-        <AutomationStatusBanner automationStatus={automationStatus} />
         {requiredSkills === null ? (
           <p style={{ color: "var(--text-dim)", fontSize: 13 }}>Loading…</p>
+        ) : isExtracting ? (
+          <SkillsExtractingIndicator />
         ) : (
-          <TagEditor
-            key={application.id}
-            initialSkills={requiredSkills}
-            onSave={(names) => setApplicationSkills(application.id, names)}
-            saveLabel="Save required skills"
-          />
+          <>
+            <AutomationStatusBanner automationStatus={automationStatus} />
+            <TagEditor
+              key={application.id}
+              initialSkills={requiredSkills}
+              onSave={(names) => setApplicationSkills(application.id, names)}
+              saveLabel="Save required skills"
+            />
+          </>
         )}
       </div>
 
