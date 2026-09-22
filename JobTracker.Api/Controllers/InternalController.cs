@@ -5,6 +5,7 @@ using JobTracker.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 [ApiController]
 [Route("api/internal")]
@@ -25,9 +26,32 @@ public class InternalController(AppDbContext db, IConfiguration config, ISkillRe
 
         resume.ExtractedText = req.ExtractedText;
         resume.ProposedSkillsJson = System.Text.Json.JsonSerializer.Serialize(req.SkillNames);
-        resume.ExtractionStatus = req.SkillNames.Count == 0 && string.IsNullOrWhiteSpace(req.ExtractedText)
+        resume.ExtractionStatus = (req.SkillNames?.Count ?? 0) == 0 && string.IsNullOrWhiteSpace(req.ExtractedText)
             ? "failed"
             : "succeeded";
+
+        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == resume.UserId);
+        if (profile is null)
+        {
+            profile = new UserProfile { UserId = resume.UserId };
+            db.UserProfiles.Add(profile);
+        }
+
+        profile.ExperienceYears = req.ExperienceYears ?? 0;
+        profile.Education = req.Education;
+        profile.ResumeRawText = req.ExtractedText;
+
+        if (!string.IsNullOrWhiteSpace(req.SeniorityLevel)
+            && Enum.TryParse<SeniorityLevel>(req.SeniorityLevel, ignoreCase: true, out var parsedSeniority))
+        {
+            profile.SeniorityLevel = parsedSeniority;
+        }
+
+        if (req.ResumeEmbedding is { Count: > 0 })
+        {
+            profile.ResumeEmbedding = new Pgvector.Vector(req.ResumeEmbedding.ToArray());
+        }
+
         await db.SaveChangesAsync();
 
         return Ok(new { resume.Id, skillCount = req.SkillNames?.Count ?? 0, extractedTextLength = req.ExtractedText?.Length ?? 0 });
@@ -211,5 +235,12 @@ public async Task<IActionResult> SetApplicationSkillsFromAutomation(Guid id, [Fr
     }
     public record InterviewQuestionsRequest(int Round, string Questions);
     public record UpdateApplicationSkillsRequest(List<SkillImportanceDto> Skills, float[]? RequirementsEmbedding);
-    public record ResumeExtractionRequest(string ExtractedText, List<string> SkillNames);
+    public record ResumeExtractionRequest(
+        string ExtractedText,
+        [property: JsonPropertyName("skills")] List<string> SkillNames,
+        int? ExperienceYears,
+        string? SeniorityLevel,
+        string? Education,
+        List<float>? ResumeEmbedding
+    );
 }

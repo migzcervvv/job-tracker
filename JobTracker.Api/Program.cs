@@ -24,16 +24,26 @@ builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("n8n");
 
 var connectionString = builder.Configuration.GetConnectionString("Default");
+builder.Services.AddDbContext<AppDbContext>((sp, options) =>
+{
+    var httpContextAccessor = sp.GetService<IHttpContextAccessor>();
+    var isTestUser = httpContextAccessor?.HttpContext?.User?.IsInRole("test") ?? false;
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(
+    if (isTestUser)
+    {
+        options.UseInMemoryDatabase("TestSandbox");
+    }
+    else
+    {
+        options.UseNpgsql(
         connectionString,
         o =>
-        {
-            o.UseVector(); // This line will work if the correct package is installed.
-        }
-    )
-);
+            {
+                o.UseVector();
+            }
+        );
+    }
+});
 
 builder.Services
     .AddIdentity<IdentityUser<Guid>, IdentityRole<Guid>>(options =>
@@ -88,28 +98,21 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
-    var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
-    foreach (var role in new[] { "admin", "user" })
-    {
-        if (!await roleManager.RoleExistsAsync(role))
-            await roleManager.CreateAsync(new IdentityRole<Guid>(role));
-    }
-}
+    var services = scope.ServiceProvider;
 
-using (var scope = app.Services.CreateScope())
-{
-    var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
-    foreach (var role in new[] { "admin", "user" })
+    // --- Roles ---
+    var roleManager = services.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
+    foreach (var role in new[] { "admin", "user", "test" })
     {
         if (!await roleManager.RoleExistsAsync(role))
             await roleManager.CreateAsync(new IdentityRole<Guid>(role));
     }
 
-    // Bootstrap: only fires if literally no admin exists yet — safe to leave
-    // in permanently, since it's a no-op once you have at least one.
-    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<IdentityUser<Guid>>>();
+    var userManager = services.GetRequiredService<UserManager<IdentityUser<Guid>>>();
+
+    // --- Admin bootstrap: only fires if literally no admin exists yet — safe to
+    // leave in permanently, since it's a no-op once you have at least one. ---
     var existingAdmins = await userManager.GetUsersInRoleAsync("admin");
-
     if (existingAdmins.Count == 0)
     {
         var bootstrapEmail = app.Configuration["Bootstrap:AdminEmail"];
@@ -117,23 +120,49 @@ using (var scope = app.Services.CreateScope())
 
         if (!string.IsNullOrEmpty(bootstrapEmail) && !string.IsNullOrEmpty(bootstrapPassword))
         {
-            var user = await userManager.FindByEmailAsync(bootstrapEmail);
-            if (user is null)
+            var admin = await userManager.FindByEmailAsync(bootstrapEmail);
+            if (admin is null)
             {
-                user = new IdentityUser<Guid> { UserName = bootstrapEmail, Email = bootstrapEmail };
-                var result = await userManager.CreateAsync(user, bootstrapPassword);
+                admin = new IdentityUser<Guid> { UserName = bootstrapEmail, Email = bootstrapEmail };
+                var result = await userManager.CreateAsync(admin, bootstrapPassword);
                 if (result.Succeeded)
-                    await userManager.AddToRoleAsync(user, "admin");
+                    await userManager.AddToRoleAsync(admin, "admin");
             }
             else
             {
                 // Account already exists (e.g. from before registration closed) — promote it, don't error.
-                await userManager.AddToRoleAsync(user, "admin");
+                await userManager.AddToRoleAsync(admin, "admin");
             }
         }
     }
-}
 
+    // --- Test account: seeds the shared test login into the REAL database (the
+    // account record itself, not usage data). Runs with no HttpContext, so the
+    // DbContext above resolves the real Npgsql provider here regardless of the
+    // request-time switch logic. ---
+    var testEmail = app.Configuration["TestAccount:Email"];
+    var testPassword = app.Configuration["TestAccount:Password"];
+    if (!string.IsNullOrWhiteSpace(testEmail) && !string.IsNullOrWhiteSpace(testPassword))
+    {
+        var testUser = await userManager.FindByEmailAsync(testEmail);
+        if (testUser is null)
+        {
+            testUser = new IdentityUser<Guid>
+            {
+                UserName = testEmail,
+                Email = testEmail,
+                EmailConfirmed = true,
+            };
+            var result = await userManager.CreateAsync(testUser, testPassword);
+            if (result.Succeeded)
+                await userManager.AddToRoleAsync(testUser, "test");
+        }
+        else if (!await userManager.IsInRoleAsync(testUser, "test"))
+        {
+            await userManager.AddToRoleAsync(testUser, "test");
+        }
+    }
+}
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();

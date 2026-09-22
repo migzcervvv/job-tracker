@@ -11,7 +11,7 @@ Built solo as a portfolio project — .NET 8 API, React frontend, PostgreSQL wit
 |            |                                        |
 | ---------- | -------------------------------------- |
 | App        | `<https://job-trackerch.netlify.app/>` |
-| Test login | `<u: test@test.test p: Testing123>`                 |
+| Test login | `<u: test@test.test p: Testing123>`    |
 
 Registration is closed by design — accounts are created by an admin. See [Bootstrapping](#bootstrapping) if you're running this yourself.
 
