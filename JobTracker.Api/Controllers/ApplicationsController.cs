@@ -14,9 +14,9 @@ namespace JobTracker.Api.Controllers;
 [ApiController]
 [Route("api/applications")]
 [Authorize]
-public class ApplicationsController(AppDbContext db, 
-    IHttpClientFactory httpClientFactory, 
-    IConfiguration config, 
+public class ApplicationsController(AppDbContext db,
+    IHttpClientFactory httpClientFactory,
+    IConfiguration config,
     IServiceScopeFactory scopeFactory,
     IFitScorer fitScorer) : ControllerBase
 {
@@ -81,60 +81,77 @@ public class ApplicationsController(AppDbContext db,
         var automationTriggered = !string.IsNullOrEmpty(webhookUrl);
 
         if (automationTriggered)
+            TriggerSkillExtraction(app.Id, app.RawDescription);
+
+        return Ok(new { application = ToResponse(app), wasDuplicate = false, automationTriggered });
+    }
+
+    // Shared by Create() and the retry endpoint below — same fire-and-forget
+    // pattern, own DbContext scope since the request's `db` won't survive
+    // past the response.
+    private void TriggerSkillExtraction(Guid applicationId, string rawDescription)
+    {
+        var webhookUrl = config["N8n:SkillExtractionWebhookUrl"];
+        if (string.IsNullOrEmpty(webhookUrl)) return;
+
+        _ = Task.Run(async () =>
         {
-            // Detached from the request entirely — this task keeps running
-            // after the HTTP response has already gone out. Its own DbContext
-            // scope is required because the request's `db` gets disposed
-            // the moment this action method returns.
-            var applicationId = app.Id;
-            var rawDescription = app.RawDescription;
-            _ = Task.Run(async () =>
+            using var scope = scopeFactory.CreateScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
             {
-                using var scope = scopeFactory.CreateScope();
-                var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                Id = Guid.NewGuid(),
+                Type = "skill_extraction",
+                ApplicationId = applicationId,
+                Status = "triggered",
+            });
+            await scopedDb.SaveChangesAsync();
+
+            try
+            {
+                var client = httpClientFactory.CreateClient("n8n");
+                client.Timeout = TimeSpan.FromSeconds(10);
+                var res = await client.PostAsJsonAsync(webhookUrl,
+                    new { applicationId, rawDescription });
 
                 scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
                 {
                     Id = Guid.NewGuid(),
                     Type = "skill_extraction",
                     ApplicationId = applicationId,
-                    Status = "triggered",
+                    Status = res.IsSuccessStatusCode ? "succeeded" : "failed",
+                    Message = res.IsSuccessStatusCode ? null : $"n8n responded HTTP {(int)res.StatusCode}",
                 });
                 await scopedDb.SaveChangesAsync();
-
-                try
+            }
+            catch (Exception ex)
+            {
+                scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
                 {
-                    var client = httpClientFactory.CreateClient("n8n");
-                    client.Timeout = TimeSpan.FromSeconds(10);
-                    var res = await client.PostAsJsonAsync(webhookUrl,
-                        new { applicationId, rawDescription });
+                    Id = Guid.NewGuid(),
+                    Type = "skill_extraction",
+                    ApplicationId = applicationId,
+                    Status = "failed",
+                    Message = ex.Message,
+                });
+                await scopedDb.SaveChangesAsync();
+            }
+        });
+    }
 
-                    scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-                    {
-                        Id = Guid.NewGuid(),
-                        Type = "skill_extraction",
-                        ApplicationId = applicationId,
-                        Status = res.IsSuccessStatusCode ? "succeeded" : "failed",
-                        Message = res.IsSuccessStatusCode ? null : $"n8n responded HTTP {(int)res.StatusCode}",
-                    });
-                    await scopedDb.SaveChangesAsync();
-                }
-                catch (Exception ex)
-                {
-                    scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-                    {
-                        Id = Guid.NewGuid(),
-                        Type = "skill_extraction",
-                        ApplicationId = applicationId,
-                        Status = "failed",
-                        Message = ex.Message,
-                    });
-                    await scopedDb.SaveChangesAsync();
-                }
-            });
-        }
+    [HttpPost("{id}/retry-skill-extraction")]
+    public async Task<IActionResult> RetrySkillExtraction(Guid id)
+    {
+        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
+        if (app is null) return NotFound();
 
-        return Ok(new { application = ToResponse(app), wasDuplicate = false, automationTriggered });
+        var webhookUrl = config["N8n:SkillExtractionWebhookUrl"];
+        if (string.IsNullOrEmpty(webhookUrl))
+            return BadRequest("Skill extraction is not configured.");
+
+        TriggerSkillExtraction(app.Id, app.RawDescription);
+        return Accepted(new { status = "triggered" });
     }
 
     [HttpDelete("{id}")]
@@ -154,9 +171,6 @@ public class ApplicationsController(AppDbContext db,
         if (!Enum.IsDefined(typeof(ApplicationStatus), req.Status))
             return BadRequest("Unknown status value.");
 
-        // The query filter already scopes this to the current user —
-        // a row belonging to someone else simply won't be found, giving a 404
-        // rather than leaking whether it exists (per §7.3 of the build guide).
         var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
         if (app is null) return NotFound();
 
@@ -199,7 +213,6 @@ public class ApplicationsController(AppDbContext db,
             ? (int)Math.Round(100.0 * requiredSkillIds.Count(id => mySkillIds.Contains(id)) / requiredSkillIds.Count)
             : null;
 
-
         var response = new ApplicationDetailResponse(
             app.Id, app.Title, app.Company, app.JobUrl, app.RawDescription,
             app.Status, app.AppliedDate, app.UpdatedAt, fitPercentage,
@@ -212,61 +225,58 @@ public class ApplicationsController(AppDbContext db,
         return Ok(response);
     }
 
-[HttpPut("{id}/stage-details")]
-public async Task<IActionResult> UpsertStageDetail(Guid id, [FromBody] UpsertStageDetailRequest req)
-{
-    var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
-    if (app is null) return NotFound();
-
-    var fieldsJson = JsonSerializer.Serialize(req.Fields);
-
-    StageDetail? target;
-    if (req.StageDetailId is Guid targetId)
+    [HttpPut("{id}/stage-details")]
+    public async Task<IActionResult> UpsertStageDetail(Guid id, [FromBody] UpsertStageDetailRequest req)
     {
-        // Editing one specific existing record — e.g. a past interview
-        // round. Takes priority over the stage-based lookup below so an
-        // edit never falls through to "create new".
-        target = await db.StageDetails.FirstOrDefaultAsync(s => s.Id == targetId && s.ApplicationId == id);
-        if (target is null) return NotFound();
-    }
-    else if (req.Stage == ApplicationStatus.InterviewScheduled)
-    {
-        // No id supplied for an interview-round save means "this is a new round".
-        target = null;
-    }
-    else
-    {
-        // Every non-interview stage has exactly one record — overwrite it.
-        target = await db.StageDetails.FirstOrDefaultAsync(s => s.ApplicationId == id && s.Stage == req.Stage);
+        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
+        if (app is null) return NotFound();
+
+        var fieldsJson = JsonSerializer.Serialize(req.Fields);
+
+        StageDetail? target;
+        if (req.StageDetailId is Guid targetId)
+        {
+            target = await db.StageDetails.FirstOrDefaultAsync(s => s.Id == targetId && s.ApplicationId == id);
+            if (target is null) return NotFound();
+        }
+        else if (req.Stage == ApplicationStatus.InterviewScheduled)
+        {
+            target = null;
+        }
+        else
+        {
+            target = await db.StageDetails.FirstOrDefaultAsync(s => s.ApplicationId == id && s.Stage == req.Stage);
+        }
+
+        if (target is null)
+        {
+            target = new StageDetail { Id = Guid.NewGuid(), ApplicationId = id, Stage = req.Stage };
+            db.StageDetails.Add(target);
+        }
+
+        target.FieldsJson = fieldsJson;
+        await db.SaveChangesAsync();
+
+        return Ok(new StageDetailResponse(target.Id, target.Stage, target.FieldsJson, target.CreatedAt));
     }
 
-    if (target is null)
-    {
-        target = new StageDetail { Id = Guid.NewGuid(), ApplicationId = id, Stage = req.Stage };
-        db.StageDetails.Add(target);
-    }
-
-    target.FieldsJson = fieldsJson;
-    await db.SaveChangesAsync();
-
-    return Ok(new StageDetailResponse(target.Id, target.Stage, target.FieldsJson, target.CreatedAt));
-}
-    // ApplicationsController.cs — new action
+    // type defaults to "skill_extraction" for backward compatibility; pass
+    // ?type=interview_questions to poll that automation instead.
     [HttpGet("{id}/automation-status")]
-    public async Task<IActionResult> GetAutomationStatus(Guid id)
+    public async Task<IActionResult> GetAutomationStatus(Guid id, [FromQuery] string type = "skill_extraction")
     {
         var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
         if (app is null) return NotFound();
 
         var latest = await db.AutomationLogEntries
-            .Where(e => e.ApplicationId == id && e.Type == "skill_extraction")
+            .Where(e => e.ApplicationId == id && e.Type == type)
             .OrderByDescending(e => e.CreatedAt)
             .FirstOrDefaultAsync();
 
         if (latest is null) return Ok(new { status = (string?)null });
         return Ok(new { status = latest.Status, message = latest.Message, createdAt = latest.CreatedAt });
     }
-    // ApplicationsController.cs
+
     public record GenerateQuestionsRequest(int? Round);
 
     [HttpPost("{id}/interview-questions")]

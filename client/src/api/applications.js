@@ -65,3 +65,10 @@ export async function generateInterviewQuestions(id, round) {
   );
   return data;
 }
+
+export async function retrySkillExtraction(id) {
+  const { data } = await api.post(
+    `/api/applications/${id}/retry-skill-extraction`,
+  );
+  return data;
+}

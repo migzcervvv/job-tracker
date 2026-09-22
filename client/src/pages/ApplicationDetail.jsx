@@ -11,6 +11,7 @@ import {
   deleteApplication,
   getAutomationStatus,
   generateInterviewQuestions,
+  retrySkillExtraction,
 } from "../api/applications.js";
 import { getApplicationSkills, setApplicationSkills } from "../api/skills.js";
 import { relativeTime } from "../api/dates.js";
@@ -34,15 +35,6 @@ function formatDate(dateString) {
   });
 }
 
-// One entry per stage-detail record, in pipeline order, each carrying
-// whether it's editable and whether it should default open:
-//  - current stage — editable, opens expanded (nothing to hide yet)
-//  - past stage with a saved record — editable, collapsed by default
-//  - past stage with nothing saved — "No details recorded", locked
-//  - future stage — "Not reached yet", locked
-//  - anything, once the application is closed — editable
-// Interview rounds are their own entries (oldest first), plus one extra
-// "add a new round" slot while sitting on that stage.
 function buildStageEntries(stageDetails, currentStatus) {
   const isClosed = statusMeta(currentStatus).terminal;
   const byStage = new Map();
@@ -97,6 +89,7 @@ function buildStageEntries(stageDetails, currentStatus) {
         record,
         editable,
         roundLabel,
+        round: stageValue === STATUS.InterviewScheduled ? i + 1 : null,
         defaultExpanded: stageValue === currentStatus,
       });
     });
@@ -109,6 +102,7 @@ function buildStageEntries(stageDetails, currentStatus) {
       record: null,
       editable: true,
       roundLabel: `Round ${existingRounds + 1}`,
+      round: existingRounds + 1,
       isNewRound: true,
       defaultExpanded: existingRounds === 0,
     });
@@ -171,24 +165,29 @@ function StageTrack({ status }) {
   );
 }
 
-function AutomationStatusBanner({ automationStatus }) {
-  if (!automationStatus || !automationStatus.status) return null;
+function AutomationStatusBanner({
+  automationStatus,
+  timedOut,
+  onRetry,
+  retrying,
+}) {
+  const failed = automationStatus?.status === "failed";
+  if (!failed && !timedOut) return null;
 
-  if (automationStatus.status === "failed") {
-    return (
-      <div className="automation-banner automation-banner-failed">
-        Automatic skill extraction failed
-        {automationStatus.message ? `: ${automationStatus.message}` : "."} Add
-        skills manually below.
-      </div>
-    );
-  }
+  const message = timedOut
+    ? "Skill extraction is taking longer than expected."
+    : `Automatic skill extraction failed${automationStatus.message ? `: ${automationStatus.message}` : "."}`;
 
-  return null;
+  return (
+    <div className="automation-banner automation-banner-failed">
+      <span>{message} Add skills manually below, or </span>
+      <button className="icon-btn" onClick={onRetry} disabled={retrying}>
+        {retrying ? "Retrying…" : "Retry extraction"}
+      </button>
+    </div>
+  );
 }
 
-// Shown in place of the tag editor while n8n hasn't reported success or
-// failure yet. Skeleton chips signal "skills are coming", not "no skills".
 function SkillsExtractingIndicator() {
   return (
     <div className="skills-extracting">
@@ -216,6 +215,9 @@ export function ApplicationDetail() {
   const [stageDetails, setStageDetails] = useState(null);
   const [requiredSkills, setRequiredSkills] = useState(null);
   const [automationStatus, setAutomationStatus] = useState(null);
+  const [extractionTimedOut, setExtractionTimedOut] = useState(false);
+  const [retryingExtraction, setRetryingExtraction] = useState(false);
+  const [pollTrigger, setPollTrigger] = useState(0);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [generatingRound, setGeneratingRound] = useState(null);
@@ -276,6 +278,7 @@ export function ApplicationDetail() {
     let attempts = 0;
     const MAX_ATTEMPTS = 10;
     skillsRefetchedRef.current = false;
+    setExtractionTimedOut(false);
 
     function poll() {
       getAutomationStatus(id)
@@ -294,6 +297,9 @@ export function ApplicationDetail() {
           }
 
           if (data.status !== "triggered" || attempts >= MAX_ATTEMPTS) {
+            if (data.status === "triggered" && attempts >= MAX_ATTEMPTS) {
+              setExtractionTimedOut(true);
+            }
             if (intervalId) clearInterval(intervalId);
           }
         })
@@ -309,7 +315,7 @@ export function ApplicationDetail() {
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
     };
-  }, [application?.id, id]);
+  }, [application?.id, id, pollTrigger]);
 
   useEffect(() => {
     return () => {
@@ -342,10 +348,26 @@ export function ApplicationDetail() {
     }
   }
 
+  async function handleRetrySkillExtraction() {
+    setRetryingExtraction(true);
+    try {
+      await retrySkillExtraction(application.id);
+      setAutomationStatus({ status: "triggered" });
+      setExtractionTimedOut(false);
+      skillsRefetchedRef.current = false;
+      setPollTrigger((t) => t + 1);
+      notify.info("Retrying extraction…", "This can take a few seconds.");
+    } catch (err) {
+      notify.error("Could not retry extraction", extractErrorMessage(err));
+    } finally {
+      setRetryingExtraction(false);
+    }
+  }
+
   function startQuestionsPoll(baselineTimelineCount) {
     if (questionsPollRef.current) clearInterval(questionsPollRef.current);
     let attempts = 0;
-    const MAX_ATTEMPTS = 20; // ~80s at 4s apart
+    const MAX_ATTEMPTS = 20;
 
     questionsPollRef.current = setInterval(async () => {
       attempts += 1;
@@ -372,7 +394,7 @@ export function ApplicationDetail() {
         setGeneratingRound(null);
         notify.info(
           "Still working",
-          "The workflow is taking longer than expected — check back shortly.",
+          "The workflow is taking longer than expected — check back shortly, or try again.",
         );
       }
     }, 4000);
@@ -436,7 +458,8 @@ export function ApplicationDetail() {
     application.status,
   );
 
-  const isExtracting = automationStatus?.status === "triggered";
+  const isExtracting =
+    automationStatus?.status === "triggered" && !extractionTimedOut;
 
   return (
     <Layout
@@ -582,7 +605,12 @@ export function ApplicationDetail() {
           <SkillsExtractingIndicator />
         ) : (
           <>
-            <AutomationStatusBanner automationStatus={automationStatus} />
+            <AutomationStatusBanner
+              automationStatus={automationStatus}
+              timedOut={extractionTimedOut}
+              onRetry={handleRetrySkillExtraction}
+              retrying={retryingExtraction}
+            />
             <TagEditor
               key={application.id}
               initialSkills={requiredSkills}
@@ -606,7 +634,9 @@ export function ApplicationDetail() {
               applicationId={application.id}
               onSaved={handleStageSaved}
               onGenerateQuestions={
-                entry.isNewRound ? handleGenerateQuestions : null
+                entry.stage === STATUS.InterviewScheduled
+                  ? handleGenerateQuestions
+                  : null
               }
               generatingRound={generatingRound}
             />

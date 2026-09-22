@@ -3,7 +3,6 @@ using JobTracker.Api.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
-using System.Reflection.Emit;
 
 namespace JobTracker.Api.Data;
 
@@ -50,7 +49,6 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
         builder.Entity<StageDetail>()
             .HasQueryFilter(s => _currentUserId == null || s.Application!.UserId == _currentUserId);
 
-        // inside OnModelCreating:
         builder.Entity<ApplicationSkill>().HasKey(x => new { x.ApplicationId, x.SkillId });
         builder.Entity<UserSkill>().HasKey(x => new { x.UserId, x.SkillId });
         builder.Entity<Skill>().HasIndex(s => s.Name).IsUnique();
@@ -65,16 +63,31 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
             .HasForeignKey(x => x.ApplicationId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        builder.HasPostgresExtension("vector");
-
-        builder.Entity<UserProfile>(e =>
+        // pgvector setup is Npgsql-only. The InMemory provider (test-role
+        // sandbox) has no concept of Postgres extensions or vector column
+        // types — applying these unconditionally is harmless in practice,
+        // but guarding on IsNpgsql() keeps the model-building path honest
+        // per provider and avoids relying on undocumented tolerance.
+        if (Database.IsNpgsql())
         {
-            e.HasKey(p => p.UserId);
-            e.Property(p => p.ResumeEmbedding).HasColumnType("vector(1536)");
-        });
+            builder.HasPostgresExtension("vector");
 
-        builder.Entity<Application>()
-            .Property(a => a.JobEmbedding)
-            .HasColumnType("vector(1536)");
+            builder.Entity<UserProfile>(e =>
+            {
+                e.HasKey(p => p.UserId);
+                e.Property(p => p.ResumeEmbedding).HasColumnType("vector(1536)");
+            });
+
+            builder.Entity<Application>()
+                .Property(a => a.JobEmbedding)
+                .HasColumnType("vector(1536)");
+        }
+        else
+        {
+            // InMemory: still need the key and the property mapped, just
+            // without a Postgres column type. The Pgvector.Vector CLR type
+            // stores fine as an opaque object under InMemory.
+            builder.Entity<UserProfile>(e => e.HasKey(p => p.UserId));
+        }
     }
 }

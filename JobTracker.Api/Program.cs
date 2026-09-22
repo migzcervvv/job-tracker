@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 
@@ -27,20 +28,27 @@ var connectionString = builder.Configuration.GetConnectionString("Default");
 builder.Services.AddDbContext<AppDbContext>((sp, options) =>
 {
     var httpContextAccessor = sp.GetService<IHttpContextAccessor>();
-    var isTestUser = httpContextAccessor?.HttpContext?.User?.IsInRole("test") ?? false;
+    var user = httpContextAccessor?.HttpContext?.User;
+    var isTestUser = user?.IsInRole("test") ?? false;
 
     if (isTestUser)
     {
-        options.UseInMemoryDatabase("TestSandbox");
+        // Keyed by jti (unique per login), not by user id — two people
+        // logging in with the same shared test credentials get separate
+        // sandboxes. A missing jti (shouldn't happen post-login, but covers
+        // any token minted before this claim existed) falls back to a
+        // single shared sandbox rather than throwing.
+        var sessionId = user!.FindFirst(JwtRegisteredClaimNames.Jti)?.Value ?? "shared";
+        options.UseInMemoryDatabase($"TestSandbox:{sessionId}");
     }
     else
     {
         options.UseNpgsql(
         connectionString,
         o =>
-            {
-                o.UseVector();
-            }
+        {
+            o.UseVector();
+        }
         );
     }
 });

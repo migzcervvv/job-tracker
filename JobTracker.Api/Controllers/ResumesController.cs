@@ -89,80 +89,99 @@ public class ResumesController(AppDbContext db,
         db.Resumes.Add(resume);
         await db.SaveChangesAsync();
 
-        // ---- webhook trigger starts here — everything above this line is Phase 2, unchanged ----
         var webhookUrl = config["N8n:ResumeExtractionWebhookUrl"];
         if (!string.IsNullOrEmpty(webhookUrl))
         {
-            var resumeId = resume.Id;
-            var storagePath = resume.StoragePath;
+            resume.ExtractionStatus = "triggered";
+            await db.SaveChangesAsync();
+            TriggerResumeExtraction(resume.Id, resume.StoragePath);
+        }
 
-            _ = Task.Run(async () =>
+        return Ok(new { resume.Id, resume.FileName, resume.ContentType, resume.SizeBytes, resume.CreatedAt });
+    }
+
+    // Shared by Upload() and the retry endpoint below.
+    private void TriggerResumeExtraction(Guid resumeId, string storagePath)
+    {
+        var webhookUrl = config["N8n:ResumeExtractionWebhookUrl"];
+        if (string.IsNullOrEmpty(webhookUrl)) return;
+
+        _ = Task.Run(async () =>
+        {
+            using var scope = scopeFactory.CreateScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var scopedStorage = scope.ServiceProvider.GetRequiredService<ISupabaseStorageService>();
+
+            scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
             {
-                using var scope = scopeFactory.CreateScope();
-                var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var scopedStorage = scope.ServiceProvider.GetRequiredService<ISupabaseStorageService>();
+                Id = Guid.NewGuid(),
+                Type = "resume_extraction",
+                ApplicationId = null,
+                Status = "triggered",
+                Message = resumeId.ToString(),
+            });
+            await scopedDb.SaveChangesAsync();
+
+            try
+            {
+                var signedUrl = await scopedStorage.CreateSignedUrlAsync(storagePath, expiresInSeconds: 600);
+                var client = httpClientFactory.CreateClient("n8n");
+                client.Timeout = TimeSpan.FromSeconds(30);
+                var res = await client.PostAsJsonAsync(webhookUrl, new { resumeId, downloadUrl = signedUrl });
 
                 scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
                 {
                     Id = Guid.NewGuid(),
                     Type = "resume_extraction",
                     ApplicationId = null,
-                    Status = "triggered",
-                    Message = resumeId.ToString(),
+                    Status = res.IsSuccessStatusCode ? "succeeded" : "failed",
+                    Message = res.IsSuccessStatusCode ? resumeId.ToString() : $"resume {resumeId}: HTTP {(int)res.StatusCode}",
                 });
-                await scopedDb.SaveChangesAsync();
 
-                try
+                if (!res.IsSuccessStatusCode)
                 {
-                    var signedUrl = await scopedStorage.CreateSignedUrlAsync(storagePath, expiresInSeconds: 600);
-                    var client = httpClientFactory.CreateClient("n8n");
-                    client.Timeout = TimeSpan.FromSeconds(30);
-                    var res = await client.PostAsJsonAsync(webhookUrl, new { resumeId, downloadUrl = signedUrl });
-
-                    scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-                    {
-                        Id = Guid.NewGuid(),
-                        Type = "resume_extraction",
-                        ApplicationId = null,
-                        Status = res.IsSuccessStatusCode ? "succeeded" : "failed",
-                        Message = res.IsSuccessStatusCode ? resumeId.ToString() : $"resume {resumeId}: HTTP {(int)res.StatusCode}",
-                    });
-
-                    // A non-success response here only means the *trigger* call
-                    // to n8n failed (e.g. webhook unreachable) — n8n never got
-                    // the job, so it will never call back to /internal/resumes/{id}/extraction.
-                    // Without this, the resume sits at "triggered" forever and
-                    // the UI shows it as perpetually extracting.
-                    if (!res.IsSuccessStatusCode)
-                    {
-                        var scopedResume = await scopedDb.Resumes.FirstOrDefaultAsync(r => r.Id == resumeId);
-                        if (scopedResume is not null) scopedResume.ExtractionStatus = "failed";
-                    }
-                    await scopedDb.SaveChangesAsync();
-                }
-                catch (Exception ex)
-                {
-                    scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-                    {
-                        Id = Guid.NewGuid(),
-                        Type = "resume_extraction",
-                        ApplicationId = null,
-                        Status = "failed",
-                        Message = $"resume {resumeId}: {ex.Message}",
-                    });
-
                     var scopedResume = await scopedDb.Resumes.FirstOrDefaultAsync(r => r.Id == resumeId);
                     if (scopedResume is not null) scopedResume.ExtractionStatus = "failed";
-                    await scopedDb.SaveChangesAsync();
                 }
-            });
+                await scopedDb.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
+                {
+                    Id = Guid.NewGuid(),
+                    Type = "resume_extraction",
+                    ApplicationId = null,
+                    Status = "failed",
+                    Message = $"resume {resumeId}: {ex.Message}",
+                });
 
-            resume.ExtractionStatus = "triggered";
-            await db.SaveChangesAsync();
-        }
-        // ---- webhook trigger ends here ----
+                var scopedResume = await scopedDb.Resumes.FirstOrDefaultAsync(r => r.Id == resumeId);
+                if (scopedResume is not null) scopedResume.ExtractionStatus = "failed";
+                await scopedDb.SaveChangesAsync();
+            }
+        });
+    }
 
-        return Ok(new { resume.Id, resume.FileName, resume.ContentType, resume.SizeBytes, resume.CreatedAt });
+    [HttpPost("{id}/retry-extraction")]
+    public async Task<IActionResult> RetryExtraction(Guid id)
+    {
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
+        if (resume is null) return NotFound();
+
+        var webhookUrl = config["N8n:ResumeExtractionWebhookUrl"];
+        if (string.IsNullOrEmpty(webhookUrl))
+            return BadRequest("Resume extraction is not configured.");
+
+        if (resume.ExtractionStatus == "triggered")
+            return Conflict("Extraction already in progress.");
+
+        resume.ExtractionStatus = "triggered";
+        resume.ProposedSkillsJson = null; // drop stale/partial proposal from the prior run
+        await db.SaveChangesAsync();
+
+        TriggerResumeExtraction(resume.Id, resume.StoragePath);
+        return Accepted(new { status = "triggered" });
     }
 
     [HttpGet("{id}/download")]

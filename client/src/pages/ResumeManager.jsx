@@ -6,6 +6,7 @@ import {
   listResumes,
   getResumeDownloadUrl,
   deleteResume,
+  retryResumeExtraction,
 } from "../api/resumes.js";
 import { extractErrorMessage } from "../api/errors.js";
 import { formatBytes } from "../api/format.js";
@@ -14,6 +15,7 @@ import { notify } from "../notify.js";
 export function ResumeManager() {
   const [resumes, setResumes] = useState(null);
   const [extractingResume, setExtractingResume] = useState(null);
+  const [retryingId, setRetryingId] = useState(null);
 
   useEffect(() => {
     loadResumes();
@@ -29,14 +31,12 @@ export function ResumeManager() {
 
   function handleResumeUploaded(resume) {
     setResumes((prev) => [resume, ...(prev ?? [])]);
-    // Open the blocking modal immediately — extraction has already been
-    // fired server-side, and the user shouldn't wander off mid-flow.
     setExtractingResume(resume);
   }
 
   function handleModalClosed() {
     setExtractingResume(null);
-    loadResumes(); // refresh extraction status badges
+    loadResumes();
   }
 
   async function handleDownload(id) {
@@ -55,6 +55,20 @@ export function ResumeManager() {
       notify.success("Resume deleted");
     } catch (err) {
       notify.error("Could not delete resume", extractErrorMessage(err));
+    }
+  }
+
+  async function handleRetryExtraction(resume) {
+    setRetryingId(resume.id);
+    try {
+      await retryResumeExtraction(resume.id);
+      notify.info("Retrying extraction…", "This can take a few seconds.");
+      loadResumes();
+      setExtractingResume({ ...resume, extractionStatus: "triggered" });
+    } catch (err) {
+      notify.error("Could not retry extraction", extractErrorMessage(err));
+    } finally {
+      setRetryingId(null);
     }
   }
 
@@ -85,6 +99,18 @@ export function ResumeManager() {
           {resumes.map((r) => (
             <div className="resume-row" key={r.id}>
               <span className="name">{r.fileName}</span>
+              {r.extractionStatus === "failed" && (
+                <buttonww
+                  className="pending-chip"
+                  onClick={() => handleRetryExtraction(r)}
+                  disabled={retryingId === r.id}
+                >
+                  {retryingId === r.id ? "Retrying…" : "Retry extraction"}
+                </buttonww>
+              )}
+              {r.extractionStatus === "triggered" && (
+                <span className="size">Extracting…</span>
+              )}
               {r.proposedSkillCount > 0 && (
                 <button
                   className="pending-chip"
