@@ -237,7 +237,7 @@ public async Task<IActionResult> SetApplicationSkillsFromAutomation(Guid id, [Fr
     public record UpdateApplicationSkillsRequest(List<SkillImportanceDto> Skills, float[]? RequirementsEmbedding);
     public record ResumeExtractionRequest(
         string ExtractedText,
-        [property: JsonPropertyName("skills")] List<string> SkillNames,
+        [property: JsonPropertyName("skills")] List<SkillEvidenceDto> SkillNames,
         int? ExperienceYears,
         string? SeniorityLevel,
         string? Education,
