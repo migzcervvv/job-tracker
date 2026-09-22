@@ -40,13 +40,10 @@ public class InternalController(AppDbContext db, IConfiguration config, ISkillRe
         profile.ExperienceYears = req.ExperienceYears ?? 0;
         profile.Education = req.Education;
         profile.ResumeRawText = req.ExtractedText;
-
-        if (!string.IsNullOrWhiteSpace(req.SeniorityLevel)
-            && Enum.TryParse<SeniorityLevel>(req.SeniorityLevel, ignoreCase: true, out var parsedSeniority))
+        if (req.SeniorityLevel is int n && Enum.IsDefined(typeof(SeniorityLevel), n))
         {
-            profile.SeniorityLevel = parsedSeniority;
+            profile.SeniorityLevel = (SeniorityLevel)n;
         }
-
         if (req.ResumeEmbedding is { Count: > 0 })
         {
             profile.ResumeEmbedding = new Pgvector.Vector(req.ResumeEmbedding.ToArray());
@@ -239,7 +236,7 @@ public async Task<IActionResult> SetApplicationSkillsFromAutomation(Guid id, [Fr
         string ExtractedText,
         [property: JsonPropertyName("skills")] List<SkillEvidenceDto> SkillNames,
         int? ExperienceYears,
-        string? SeniorityLevel,
+        int? SeniorityLevel,
         string? Education,
         List<float>? ResumeEmbedding
     );
