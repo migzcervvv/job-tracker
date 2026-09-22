@@ -56,7 +56,8 @@ public class ResumesController(AppDbContext db,
             r.ExtractionStatus,
             ProposedSkillCount = string.IsNullOrEmpty(r.ProposedSkillsJson)
                 ? 0
-                : (System.Text.Json.JsonSerializer.Deserialize<List<string>>(r.ProposedSkillsJson) ?? new()).Count,
+                : (System.Text.Json.JsonSerializer.Deserialize
+                <List<SkillEvidenceDto>>(r.ProposedSkillsJson) ?? new()).Count,
         });
 
         return Ok(shaped);
@@ -193,8 +194,9 @@ public class ResumesController(AppDbContext db,
         if (resume is null) return NotFound();
 
         var proposed = string.IsNullOrEmpty(resume.ProposedSkillsJson)
-            ? new List<string>()
-            : System.Text.Json.JsonSerializer.Deserialize<List<string>>(resume.ProposedSkillsJson) ?? new();
+            ? new List<SkillEvidenceDto>()
+            : System.Text.Json.JsonSerializer.Deserialize
+                <List<SkillEvidenceDto>>(resume.ProposedSkillsJson) ?? new();
 
         var alreadyClaimed = await  db.UserSkills
             .Where(us => us.UserId == CurrentUserId)
@@ -204,7 +206,13 @@ public class ResumesController(AppDbContext db,
         return Ok(new
         {
             extractionStatus = resume.ExtractionStatus,
-            proposedSkills = proposed.Select(name => new { name, alreadyClaimed = alreadyClaimed.Contains(name) }),
+            proposedSkills = proposed.Select(s => new
+            {
+                name = s.Name,
+                evidence = s.Evidence,
+                strength = s.Strength,
+                alreadyClaimed = alreadyClaimed.Contains(s.Name),
+            }),
         });
     }
 
