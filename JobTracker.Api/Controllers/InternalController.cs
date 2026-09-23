@@ -37,7 +37,11 @@ public class InternalController(AppDbContext db, IConfiguration config, ISkillRe
             db.UserProfiles.Add(profile);
         }
 
-        profile.ExperienceYears = req.ExperienceYears ?? 0;
+        profile.ExperienceYears = (int)Math.Round(
+            req.ExperienceYears ?? 0.0,
+            MidpointRounding.AwayFromZero
+        );
+        
         profile.Education = req.Education;
         profile.ResumeRawText = req.ExtractedText;
         if (req.SeniorityLevel is int n && Enum.IsDefined(typeof(SeniorityLevel), n))
@@ -235,7 +239,7 @@ public async Task<IActionResult> SetApplicationSkillsFromAutomation(Guid id, [Fr
     public record ResumeExtractionRequest(
         string ExtractedText,
         [property: JsonPropertyName("skills")] List<SkillEvidenceDto> SkillNames,
-        int? ExperienceYears,
+        double? ExperienceYears,
         int? SeniorityLevel,
         string? Education,
         List<float>? ResumeEmbedding
