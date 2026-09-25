@@ -15,8 +15,8 @@ namespace JobTracker.Api.Controllers;
 [Route("api/admin")]
 [Authorize(Roles = "admin")]
 public class AdminController(
-    AppDbContext db, UserManager<IdentityUser<Guid>> users, IConfiguration config,
-    IAppStartTime startTime, IHttpClientFactory httpFactory) : ControllerBase
+    AppDbContext db, UserManager<IdentityUser<Guid>> users,
+    IAppStartTime startTime, IN8nHealthChecker n8nHealth) : ControllerBase
 {
     private readonly UserManager<IdentityUser<Guid>> _users = users;
 
@@ -77,24 +77,7 @@ public class AdminController(
         try { dbHealthy = await db.Database.CanConnectAsync(); }
         catch { dbHealthy = false; }
 
-        string n8nStatus;
-        var n8nBaseUrl = config["N8n:BaseUrl"];
-        if (string.IsNullOrEmpty(n8nBaseUrl))
-        {
-            n8nStatus = $"not_configured";
-        }
-        else
-        {
-            try
-            {
-                //Changed to health instead of healthz
-                var client = httpFactory.CreateClient();
-                client.Timeout = TimeSpan.FromSeconds(5);
-                var res = await client.GetAsync($"{n8nBaseUrl.TrimEnd('/')}/health");
-                n8nStatus = res.IsSuccessStatusCode ? "healthy" : "unreachable";
-            }
-            catch { n8nStatus = "unreachable"; }
-        }
+        var n8nStatus = await n8nHealth.CheckAsync();
 
         return Ok(new
         {

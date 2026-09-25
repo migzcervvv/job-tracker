@@ -20,7 +20,8 @@ builder.Services.AddScoped<ICurrentUserAccessor, CurrentUserAccessor>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<ISupabaseStorageService, SupabaseStorageService>();
 builder.Services.AddScoped<ISkillResolver, SkillResolver>();
-builder.Services.AddScoped<IFitScorer, FitScorer>();   // new
+builder.Services.AddScoped<IFitScorer, FitScorer>();
+builder.Services.AddScoped<IN8nHealthChecker, N8nHealthChecker>();
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("n8n");
 
