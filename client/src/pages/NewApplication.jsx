@@ -8,7 +8,7 @@ import { useApplications } from '../state/ApplicationsContext.jsx';
 
 export function NewApplication() {
   const navigate = useNavigate();
-  const { addApplication } = useApplications();
+  const { addApplication, pollExtraction } = useApplications();
 
   const [title, setTitle] = useState('');
   const [company, setCompany] = useState('');
@@ -37,6 +37,7 @@ export function NewApplication() {
       // no dependency on a GET reflecting a write that only just committed.
       if (!result.wasDuplicate) {
         addApplication(result.application);
+        if (result.automationTriggered) pollExtraction(result.application.id);
       }
       navigate('/', { replace: true });
     } catch {

@@ -289,11 +289,19 @@ export function ApplicationDetail() {
 
           if (data.status === "succeeded" && !skillsRefetchedRef.current) {
             skillsRefetchedRef.current = true;
-            getApplicationSkills(id)
-              .then((names) => {
-                if (!cancelled) setRequiredSkills(names);
-              })
-              .catch(() => {});
+            Promise.all([
+              getApplicationSkills(id).catch(() => null),
+              getApplication(id).catch(() => null),
+            ]).then(([names, fresh]) => {
+              if (cancelled) return;
+              if (names) setRequiredSkills(names);
+              if (fresh) {
+                setApplication(fresh);
+                setTimeline(fresh.timeline);
+                setStageDetails(fresh.stageDetails);
+                updateApplication(id, fresh);
+              }
+            });
           }
 
           if (data.status !== "triggered" || attempts >= MAX_ATTEMPTS) {
@@ -329,6 +337,22 @@ export function ApplicationDetail() {
       const withoutThis = existing.filter((s) => s.id !== saved.id);
       return [saved, ...withoutThis];
     });
+  }
+
+  async function handleSkillsSave(names) {
+    await setApplicationSkills(application.id, names);
+    setRequiredSkills(names);
+    // Required skills changing shifts the fit score — refresh it here and
+    // on the board rather than leaving both stale until a reload.
+    try {
+      const fresh = await getApplication(application.id);
+      setApplication(fresh);
+      setTimeline(fresh.timeline);
+      setStageDetails(fresh.stageDetails);
+      updateApplication(application.id, fresh);
+    } catch {
+      // Skills themselves already saved — the fit-score refresh is best effort.
+    }
   }
 
   async function handleStatusChange(newStatus) {
@@ -614,7 +638,7 @@ export function ApplicationDetail() {
             <TagEditor
               key={application.id}
               initialSkills={requiredSkills}
-              onSave={(names) => setApplicationSkills(application.id, names)}
+              onSave={handleSkillsSave}
               saveLabel="Save required skills"
             />
           </>

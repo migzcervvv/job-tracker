@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { listApplications } from '../api/applications.js';
+import { listApplications, getApplication, getAutomationStatus } from '../api/applications.js';
 import { extractErrorMessage } from '../api/errors.js';
 import { notify } from '../notify.js';
 
@@ -44,6 +44,32 @@ export function ApplicationsProvider({ children }) {
     setApplications((prev) => prev?.filter((a) => a.id !== id) ?? prev);
   }
 
+  // Fires after creating an application whose skill extraction was
+  // triggered. Polls status in the background — independent of whatever
+  // page the user navigates to next — and once extraction succeeds,
+  // refetches the full application (fit score, skills) and folds it into
+  // the shared list so the board reflects it without a manual reload.
+  function pollExtraction(id, attempt = 0) {
+    const MAX_ATTEMPTS = 10;
+    const INTERVAL_MS = 3000;
+
+    getAutomationStatus(id)
+      .then((status) => {
+        if (status.status === 'succeeded') {
+          getApplication(id)
+            .then((fresh) => updateApplication(id, fresh))
+            .catch(() => {});
+          return;
+        }
+        if (status.status === 'triggered' && attempt < MAX_ATTEMPTS) {
+          setTimeout(() => pollExtraction(id, attempt + 1), INTERVAL_MS);
+        }
+        // 'failed', or timed out after MAX_ATTEMPTS: stop quietly — the
+        // application detail page surfaces a retry option for this.
+      })
+      .catch(() => {});
+  }
+
   const value = {
     applications,
     loadFailed,
@@ -51,6 +77,7 @@ export function ApplicationsProvider({ children }) {
     addApplication,
     updateApplication,
     removeApplication,
+    pollExtraction,
   };
 
   return <ApplicationsContext.Provider value={value}>{children}</ApplicationsContext.Provider>;

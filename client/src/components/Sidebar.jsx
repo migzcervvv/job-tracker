@@ -17,11 +17,18 @@ const ADMIN_LINKS = [
   { to: "/admin/automation", label: "Automation log" },
 ];
 
-export function Sidebar() {
+// isOpen/onClose only matter below the 760px breakpoint, where the rail
+// becomes an off-canvas drawer (see .rail / .rail.open in index.css).
+// Above that breakpoint the rail is always visible and these are unused.
+export function Sidebar({ isOpen = false, onClose = () => {} }) {
   const { user, isAdmin, logout } = useAuth();
 
   return (
-    <nav className="rail" aria-label="Primary">
+    <nav className={`rail${isOpen ? " open" : ""}`} aria-label="Primary">
+      <button className="rail-close" onClick={onClose} aria-label="Close menu">
+        ✕
+      </button>
+
       <div className="rail-brand">
         job<span>.</span>tracker
       </div>
@@ -32,6 +39,7 @@ export function Sidebar() {
           key={link.to}
           to={link.to}
           end={link.end}
+          onClick={onClose}
           className={({ isActive }) => `rail-link${isActive ? " active" : ""}`}
         >
           <span className="dot" />
@@ -46,6 +54,7 @@ export function Sidebar() {
             <NavLink
               key={link.to}
               to={link.to}
+              onClick={onClose}
               className={({ isActive }) =>
                 `rail-link${isActive ? " active" : ""}`
               }

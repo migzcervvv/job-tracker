@@ -2,6 +2,7 @@ import { Suspense, lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { GooeyToaster } from "goey-toast";
 import { AuthProvider } from "./auth/AuthContext.jsx";
+import { HealthGate } from "./components/HealthGate.jsx";
 import { ProtectedRoute, AdminRoute } from "./components/ProtectedRoute.jsx";
 import { Login } from "./pages/Login.jsx";
 import { Dashboard } from "./pages/Dashboard.jsx";
@@ -66,6 +67,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <GooeyToaster position="top-center" theme="dark" />
+      <HealthGate>
       <AuthProvider>
         <Suspense fallback={<RouteFallback />}>
           <Routes>
@@ -105,6 +107,7 @@ export default function App() {
           </Routes>
         </Suspense>
       </AuthProvider>
+      </HealthGate>
     </BrowserRouter>
   );
 }

@@ -11,8 +11,10 @@ import {
 import { extractErrorMessage } from "../api/errors.js";
 import { formatBytes } from "../api/format.js";
 import { notify } from "../notify.js";
+import { useApplications } from "../state/ApplicationsContext.jsx";
 
 export function ResumeManager() {
+  const { refresh: refreshApplications } = useApplications();
   const [resumes, setResumes] = useState(null);
   const [extractingResume, setExtractingResume] = useState(null);
   const [retryingId, setRetryingId] = useState(null);
@@ -37,6 +39,12 @@ export function ResumeManager() {
   function handleModalClosed() {
     setExtractingResume(null);
     loadResumes();
+  }
+
+  function handleSkillsConfirmed() {
+    // Newly confirmed skills shift every application's fit score — refresh
+    // the board in the background so it's not stale next time it's opened.
+    refreshApplications().catch(() => {});
   }
 
   async function handleDownload(id) {
@@ -100,13 +108,13 @@ export function ResumeManager() {
             <div className="resume-row" key={r.id}>
               <span className="name">{r.fileName}</span>
               {r.extractionStatus === "failed" && (
-                <buttonww
+                <button
                   className="pending-chip"
                   onClick={() => handleRetryExtraction(r)}
                   disabled={retryingId === r.id}
                 >
                   {retryingId === r.id ? "Retrying…" : "Retry extraction"}
-                </buttonww>
+                </button>
               )}
               {r.extractionStatus === "triggered" && (
                 <span className="size">Extracting…</span>
@@ -132,6 +140,7 @@ export function ResumeManager() {
       <ResumeExtractionModal
         resume={extractingResume}
         onClose={handleModalClosed}
+        onSkillsConfirmed={handleSkillsConfirmed}
       />
     </Layout>
   );

@@ -4,8 +4,10 @@ import { SkillLevelEditor } from "../components/SkillLevelEditor.jsx";
 import { getMySkills, setMySkills, setSkillLevel } from "../api/skills.js";
 import { extractErrorMessage } from "../api/errors.js";
 import { notify } from "../notify.js";
+import { useApplications } from "../state/ApplicationsContext.jsx";
 
 export function MySkills() {
+  const { refresh: refreshApplications } = useApplications();
   const [skills, setSkills] = useState(null);
 
   useEffect(() => {
@@ -32,10 +34,18 @@ export function MySkills() {
   // These three handlers hit the API directly and return the server's
   // response — SkillLevelEditor updates its own row state from whatever
   // comes back, so there's no separate refetch after every keystroke.
+  // Every one of them can shift the fit score on every application, so each
+  // also refreshes the board in the background — otherwise it's stale until
+  // the board happens to reload on its own.
+  function refreshFitScores() {
+    refreshApplications().catch(() => {});
+  }
+
   async function handleAdd(name) {
     const names = [...(skills ?? []).map((s) => s.name), name];
     const updated = await setMySkills(names);
     setSkills(updated);
+    refreshFitScores();
   }
 
   async function handleRemove(name) {
@@ -44,6 +54,7 @@ export function MySkills() {
       .map((s) => s.name);
     const updated = await setMySkills(names);
     setSkills(updated);
+    refreshFitScores();
   }
 
   async function handleLevelChange(name, level) {
@@ -51,6 +62,7 @@ export function MySkills() {
     setSkills((prev) =>
       (prev ?? []).map((s) => (s.name === updated.name ? updated : s)),
     );
+    refreshFitScores();
   }
 
   return (
