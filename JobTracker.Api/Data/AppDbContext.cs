@@ -84,10 +84,29 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
         }
         else
         {
-            // InMemory: still need the key and the property mapped, just
-            // without a Postgres column type. The Pgvector.Vector CLR type
-            // stores fine as an opaque object under InMemory.
-            builder.Entity<UserProfile>(e => e.HasKey(p => p.UserId));
+            // InMemory (test-role sandbox): Pgvector.Vector has no InMemory
+            // mapping. UseVector() is what teaches EF how to store/read that
+            // type, and it's only ever called on the Npgsql branch in
+            // Program.cs — never for the test sandbox. Left unconfigured
+            // here, EF's model validation throws the first time this
+            // DbContext is used, which is every request on every endpoint
+            // for a test-role user, not just ones that touch embeddings.
+            //
+            // Ignoring them means test users never get a semantic fit
+            // score — FitScorer already treats a missing embedding as "skip
+            // that signal, use skill-match only", so this is a degrade, not
+            // a break, and it's the right tradeoff for throwaway test data.
+            builder.Entity<UserProfile>(e =>
+            {
+                e.HasKey(p => p.UserId);
+                e.Ignore(p => p.ResumeEmbedding);
+            });
+
+            builder.Entity<Application>(e =>
+            {
+                e.Ignore(a => a.JobEmbedding);
+                e.Ignore(a => a.RequirementsEmbedding);
+            });
         }
     }
 }
