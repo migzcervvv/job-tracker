@@ -32,7 +32,9 @@ public class ApplicationsController(AppDbContext db,
     [HttpGet]
     public async Task<IActionResult> List()
     {
-        var apps = await db.Applications.ToListAsync();
+        var apps = await db.Applications
+                .OrderByDescending(a => a.AppliedDate)
+                .ToListAsync();
         var scores = await fitScorer.ScoreAsync(CurrentUserId, apps.Select(a => a.Id).ToList());
 
         return Ok(apps.Select(a => new ApplicationListItem(
