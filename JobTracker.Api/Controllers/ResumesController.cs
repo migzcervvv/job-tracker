@@ -1,296 +1,155 @@
-﻿using JobTracker.Api.Data;
+using System.Security.Claims;
+using System.Text;
+using System.Text.Json;
+using JobTracker.Api.Data;
 using JobTracker.Api.Dtos;
 using JobTracker.Api.Models;
 using JobTracker.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.Security.Claims;
 
-[ApiController]
-[Route("api/resumes")]
-[Authorize]
-public class ResumesController(AppDbContext db, 
-    ISupabaseStorageService storage,
-    IConfiguration config,
-    IServiceScopeFactory scopeFactory,
-    IHttpClientFactory httpClientFactory,
-    ISkillResolver skillResolver) : ControllerBase
+[ApiController, Route("api/resumes"), Authorize]
+public class ResumesController(AppDbContext db, ISupabaseStorageService storage, ISkillResolver resolver, AutomationService automation, DemoFileStore demoFiles) : ControllerBase
 {
-    private Guid CurrentUserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-
-    private static readonly HashSet<string> AllowedTypes = new()
-    {
-        "application/pdf",
-        "application/msword",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    };
-
+    private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+    private string DemoKey(string path) => User.FindFirstValue("jti") + ":" + path;
     [HttpGet]
     public async Task<IActionResult> List()
     {
-        // Deserializing ProposedSkillsJson can't be translated to SQL, so
-        // pull the raw rows first, then shape the count in memory.
-        var raw = await db.Resumes
-            .Where(r => r.UserId == CurrentUserId)
-            .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new
-            {
-                r.Id,
-                r.FileName,
-                r.ContentType,
-                r.SizeBytes,
-                r.CreatedAt,
-                r.ExtractionStatus,
-                r.ProposedSkillsJson,
-            })
-            .ToListAsync();
-
-        var shaped = raw.Select(r => new
-        {
-            r.Id,
-            r.FileName,
-            r.ContentType,
-            r.SizeBytes,
-            r.CreatedAt,
-            r.ExtractionStatus,
-            ProposedSkillCount = string.IsNullOrEmpty(r.ProposedSkillsJson)
-                ? 0
-                : (System.Text.Json.JsonSerializer.Deserialize
-                <List<SkillEvidenceDto>>(r.ProposedSkillsJson) ?? new()).Count,
-        });
-
-        return Ok(shaped);
+        var rows = await db.Resumes.OrderByDescending(r => r.CreatedAt).ToListAsync();
+        var runIds = rows.Where(r => r.ExtractionRunId.HasValue).Select(r => r.ExtractionRunId!.Value).ToList();
+        var runs = await db.AutomationRuns.Where(r => runIds.Contains(r.Id)).ToDictionaryAsync(r => r.Id);
+        var active = await db.UserProfiles.Where(p => p.UserId == UserId).Select(p => p.ActiveResumeId).FirstOrDefaultAsync();
+        return Ok(rows.Select(r => new { r.Id, r.FileName, r.ContentType, r.SizeBytes, r.CreatedAt,
+            extractionStatus = r.ExtractionRunId.HasValue && runs.TryGetValue(r.ExtractionRunId.Value, out var run) ? EffectiveState(run) : r.ExtractionStatus,
+            proposedSkillCount = Proposals(r).Count, isActive = active == r.Id, runId = r.ExtractionRunId }));
     }
-
-    [HttpPost]
-    [RequestSizeLimit(10_000_000)]
+    [HttpPost, RequestSizeLimit(10_000_000)]
     public async Task<IActionResult> Upload(IFormFile file)
     {
-        if (file is null || file.Length == 0) return BadRequest("No file uploaded.");
-        if (!AllowedTypes.Contains(file.ContentType)) return BadRequest("Only PDF or Word documents are allowed.");
-
-        var id = Guid.NewGuid();
-        var path = $"{CurrentUserId}/{id}-{file.FileName}";
-
-        using var ms = new MemoryStream();
-        await file.CopyToAsync(ms);
-        await storage.UploadAsync(path, ms.ToArray(), file.ContentType);
-
-        var resume = new Resume
+        if (file == null || file.Length == 0 || file.Length > 9_500_000) return BadRequest("Choose a PDF or Word document smaller than 9.5 MB.");
+        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var contentType = extension switch { ".pdf" => "application/pdf", ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".doc" => "application/msword", _ => null };
+        if (contentType == null) return BadRequest("Only PDF and Word documents are supported.");
+        using var memory = new MemoryStream(); await file.CopyToAsync(memory);
+        var bytes = memory.ToArray();
+        if (!ValidSignature(extension, bytes)) return BadRequest("File contents do not match the document extension.");
+        var resume = new Resume { Id = Guid.NewGuid(), UserId = UserId, FileName = Path.GetFileName(file.FileName), ContentType = contentType, SizeBytes = bytes.Length };
+        resume.StoragePath = $"{UserId}/{resume.Id}{extension}";
+        StorageDeletion? cleanup = null;
+        if (automation.IsDemo) demoFiles.Put(DemoKey(resume.StoragePath), bytes);
+        else
         {
-            Id = id,
-            UserId = CurrentUserId,
-            FileName = file.FileName,
-            StoragePath = path,
-            ContentType = file.ContentType,
-            SizeBytes = file.Length,
-        };
-        db.Resumes.Add(resume);
-        await db.SaveChangesAsync();
-
-        var webhookUrl = config["N8n:ResumeExtractionWebhookUrl"];
-        if (!string.IsNullOrEmpty(webhookUrl))
-        {
-            resume.ExtractionStatus = "triggered";
-            await db.SaveChangesAsync();
-            TriggerResumeExtraction(resume.Id, resume.StoragePath);
+            // Persist compensating cleanup before external storage. An interrupted upload cannot orphan a file indefinitely.
+            cleanup = new StorageDeletion { StoragePath = resume.StoragePath, NextAttemptAt = DateTimeOffset.UtcNow.AddHours(1) };
+            db.StorageDeletions.Add(cleanup); await db.SaveChangesAsync();
+            await storage.UploadAsync(resume.StoragePath, bytes, contentType);
         }
-
-        return Ok(new { resume.Id, resume.FileName, resume.ContentType, resume.SizeBytes, resume.CreatedAt });
-    }
-
-    // Shared by Upload() and the retry endpoint below.
-    private void TriggerResumeExtraction(Guid resumeId, string storagePath)
-    {
-        var webhookUrl = config["N8n:ResumeExtractionWebhookUrl"];
-        if (string.IsNullOrEmpty(webhookUrl)) return;
-
-        _ = Task.Run(async () =>
-        {
-            using var scope = scopeFactory.CreateScope();
-            var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var scopedStorage = scope.ServiceProvider.GetRequiredService<ISupabaseStorageService>();
-
-            scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-            {
-                Id = Guid.NewGuid(),
-                Type = "resume_extraction",
-                ApplicationId = null,
-                Status = "triggered",
-                Message = resumeId.ToString(),
-            });
-            await scopedDb.SaveChangesAsync();
-
-            try
-            {
-                var signedUrl = await scopedStorage.CreateSignedUrlAsync(storagePath, expiresInSeconds: 600);
-                var client = httpClientFactory.CreateClient("n8n");
-                client.Timeout = TimeSpan.FromSeconds(30);
-                var res = await client.PostAsJsonAsync(webhookUrl, new { resumeId, downloadUrl = signedUrl });
-
-                scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-                {
-                    Id = Guid.NewGuid(),
-                    Type = "resume_extraction",
-                    ApplicationId = null,
-                    Status = res.IsSuccessStatusCode ? "succeeded" : "failed",
-                    Message = res.IsSuccessStatusCode ? resumeId.ToString() : $"resume {resumeId}: HTTP {(int)res.StatusCode}",
-                });
-
-                if (!res.IsSuccessStatusCode)
-                {
-                    var scopedResume = await scopedDb.Resumes.FirstOrDefaultAsync(r => r.Id == resumeId);
-                    if (scopedResume is not null) scopedResume.ExtractionStatus = "failed";
-                }
-                await scopedDb.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-                {
-                    Id = Guid.NewGuid(),
-                    Type = "resume_extraction",
-                    ApplicationId = null,
-                    Status = "failed",
-                    Message = $"resume {resumeId}: {ex.Message}",
-                });
-
-                var scopedResume = await scopedDb.Resumes.FirstOrDefaultAsync(r => r.Id == resumeId);
-                if (scopedResume is not null) scopedResume.ExtractionStatus = "failed";
-                await scopedDb.SaveChangesAsync();
-            }
-        });
-    }
-
-    [HttpPost("{id}/retry-extraction")]
-    public async Task<IActionResult> RetryExtraction(Guid id)
-    {
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
-        if (resume is null) return NotFound();
-
-        var webhookUrl = config["N8n:ResumeExtractionWebhookUrl"];
-        if (string.IsNullOrEmpty(webhookUrl))
-            return BadRequest("Resume extraction is not configured.");
-
-        if (resume.ExtractionStatus == "triggered")
-            return Conflict("Extraction already in progress.");
-
-        resume.ExtractionStatus = "triggered";
-        resume.ProposedSkillsJson = null; // drop stale/partial proposal from the prior run
+        db.Resumes.Add(resume);
+        var run = automation.Configured("resume_extraction") ? automation.Queue(UserId, "resume_extraction", resume: resume) : null;
+        if (cleanup != null) db.StorageDeletions.Remove(cleanup);
         await db.SaveChangesAsync();
-
-        TriggerResumeExtraction(resume.Id, resume.StoragePath);
-        return Accepted(new { status = "triggered" });
+        return Ok(new { resume.Id, resume.FileName, resume.ContentType, resume.SizeBytes, resume.CreatedAt, extractionStatus = resume.ExtractionStatus, runId = run?.Id, automationTriggered = run != null });
     }
-
-    [HttpGet("{id}/download")]
+    public static bool ValidSignature(string extension, byte[] bytes) => extension switch
+    {
+        ".pdf" => bytes.AsSpan().StartsWith("%PDF-"u8),
+        ".docx" => bytes.Length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4b && bytes[2] == 3 && bytes[3] == 4,
+        ".doc" => bytes.AsSpan().StartsWith(new byte[] { 0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1 }),
+        _ => false
+    };
+    [HttpGet("{id:guid}/download")]
     public async Task<IActionResult> Download(Guid id)
     {
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
-        if (resume is null) return NotFound();
-        var url = await storage.CreateSignedUrlAsync(resume.StoragePath);
-        return Ok(new { url, resume.ContentType, resume.FileName });
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        if (resume == null) return NotFound();
+        return Ok(new { url = automation.IsDemo ? null : await storage.CreateSignedUrlAsync(resume.StoragePath), demo = automation.IsDemo, resume.FileName, resume.ContentType });
     }
-
-    [HttpDelete("{id}")]
+    [HttpGet("{id:guid}/content")]
+    public async Task<IActionResult> DemoContent(Guid id)
+    {
+        if (!automation.IsDemo) return NotFound();
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        var bytes = resume == null ? null : demoFiles.Get(DemoKey(resume.StoragePath));
+        return bytes == null ? NotFound() : File(bytes, resume!.ContentType, resume.FileName);
+    }
+    [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id)
     {
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
-        if (resume is null) return NotFound();
-        await storage.DeleteAsync(resume.StoragePath);
-        db.Resumes.Remove(resume);
-        await db.SaveChangesAsync();
-        return NoContent();
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        if (resume == null) return NotFound();
+        if (automation.IsDemo) demoFiles.Delete(DemoKey(resume.StoragePath));
+        else db.StorageDeletions.Add(new StorageDeletion { StoragePath = resume.StoragePath });
+        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == UserId && p.ActiveResumeId == id);
+        if (profile != null) { profile.ActiveResumeId = null; profile.ResumeRawText = null; profile.ResumeEmbedding = null; }
+        foreach (var app in await db.Applications.Where(a => a.ResumeId == id).ToListAsync()) { app.ResumeId = null; app.Version = Guid.NewGuid(); }
+        db.AutomationRuns.RemoveRange(await db.AutomationRuns.Where(r => r.ResumeId == id).ToListAsync());
+        db.Resumes.Remove(resume); await db.SaveChangesAsync(); return NoContent();
     }
-
-    // ResumesController.cs — new actions
-
-    [HttpGet("{id}/proposed-skills")]
-    public async Task<IActionResult> GetProposedSkills(Guid id)
+    [HttpPost("{id:guid}/activate")]
+    public async Task<IActionResult> Activate(Guid id)
     {
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
-        if (resume is null) return NotFound();
-
-        var proposed = string.IsNullOrEmpty(resume.ProposedSkillsJson)
-            ? new List<SkillEvidenceDto>()
-            : System.Text.Json.JsonSerializer.Deserialize
-                <List<SkillEvidenceDto>>(resume.ProposedSkillsJson) ?? new();
-
-        var alreadyClaimed = await  db.UserSkills
-            .Where(us => us.UserId == CurrentUserId)
-            .Select(us => us.Skill!.Name)
-            .ToListAsync();
-
-        return Ok(new
-        {
-            extractionStatus = resume.ExtractionStatus,
-            proposedSkills = proposed.Select(s => new
-            {
-                name = s.Name,
-                evidence = s.Evidence,
-                strength = s.Strength,
-                alreadyClaimed = alreadyClaimed.Contains(s.Name),
-            }),
-        });
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        if (resume == null) return NotFound();
+        if (resume.ExtractionStatus != "succeeded") return Conflict("Wait for extraction before choosing this resume.");
+        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == UserId);
+        if (profile == null) { profile = new UserProfile { UserId = UserId }; db.UserProfiles.Add(profile); }
+        profile.ActiveResumeId = id; profile.ResumeRawText = resume.ExtractedText; profile.ResumeEmbedding = resume.Embedding;
+        await db.SaveChangesAsync(); return Ok(new { activeResumeId = id });
     }
-
-    [HttpPost("{id}/confirm-skills")]
-    public async Task<IActionResult> ConfirmSkills(Guid id, [FromBody] SetSkillsRequest req)
+    [HttpPost("{id:guid}/retry-extraction")]
+    public async Task<IActionResult> Retry(Guid id)
     {
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
-        if (resume is null) return NotFound();
-
-        var skills = await skillResolver.ResolveSkillsAsync(req.SkillNames);
-        var existing = await db.UserSkills.Where(us => us.UserId == CurrentUserId).Select(us => us.SkillId).ToListAsync();
-
-        // Additive, not a replace — the user might already have skills from
-        // manual entry or a different resume. Confirming from this resume
-        // should never silently remove those.
-        foreach (var skill in skills.Where(s => !existing.Contains(s.Id)))
-            db.UserSkills.Add(new UserSkill { UserId = CurrentUserId, SkillId = skill.Id });
-
-        // Clear the proposal once reviewed — this is what moves the resume
-        // out of "pending review" in the extraction log. Without it, a
-        // resume with proposed skills stays flagged for review forever,
-        // even after the user has acted on it.
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        if (resume == null) return NotFound();
+        if (!automation.Configured("resume_extraction")) return BadRequest("Resume extraction is not configured.");
+        // Every retry gets a new ID. Old callbacks cannot change this proposal.
         resume.ProposedSkillsJson = null;
-
-        await db.SaveChangesAsync();
-        return Ok(skills.Select(s => s.Name));
+        var run = automation.Queue(UserId, "resume_extraction", resume: resume);
+        await db.SaveChangesAsync(); return Accepted(AutomationService.View(run));
     }
-
-    // Dismiss proposed skills without adding any of them — same "mark
-    // reviewed" effect as confirm-skills, minus the UserSkills writes.
-    [HttpPost("{id}/dismiss-skills")]
-    public async Task<IActionResult> DismissProposedSkills(Guid id)
+    [HttpGet("{id:guid}/automation-status")]
+    public async Task<IActionResult> Status(Guid id, Guid? runId = null)
     {
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
-        if (resume is null) return NotFound();
-
-        resume.ProposedSkillsJson = null;
-        await db.SaveChangesAsync();
-        return NoContent();
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        if (resume == null) return NotFound();
+        var run = await db.AutomationRuns.FirstOrDefaultAsync(r => r.Id == (runId ?? resume.ExtractionRunId) && r.ResumeId == id);
+        return Ok(new { runId = run?.Id, status = run == null ? resume.ExtractionStatus : EffectiveState(run), message = run?.ErrorCode });
     }
-    [HttpGet("{id}/automation-status")]
-    public async Task<IActionResult> GetAutomationStatus(Guid id)
+    private static string EffectiveState(AutomationRun run) => !AutomationRun.IsTerminal(run.Status) && run.DeadlineAt < DateTimeOffset.UtcNow ? "failed" : run.Status;
+    private static List<SkillEvidenceDto> Proposals(Resume resume) => string.IsNullOrEmpty(resume.ProposedSkillsJson) ? new() : JsonSerializer.Deserialize<List<SkillEvidenceDto>>(resume.ProposedSkillsJson) ?? new();
+    [HttpGet("{id:guid}/proposed-skills")]
+    public async Task<IActionResult> Proposed(Guid id)
     {
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == CurrentUserId);
-        if (resume is null) return NotFound();
-
-        // Resume.ExtractionStatus is the authoritative value — the callback sets it
-        // transactionally alongside the extracted data. AutomationLogEntry is a
-        // best-effort audit trail and can lag or be missing entirely.
-        var latest = await db.AutomationLogEntries
-            .Where(e => e.Type == "resume_extraction" && e.Message != null && e.Message.Contains(id.ToString()))
-            .OrderByDescending(e => e.CreatedAt)
-            .FirstOrDefaultAsync();
-
-        return Ok(new
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        if (resume == null) return NotFound();
+        var claimed = (await db.UserSkills.Select(s => s.Skill!.Name).ToListAsync()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return Ok(new { extractionStatus = resume.ExtractionStatus, proposedSkills = Proposals(resume).Select(s => new { name = s.Name, evidence = s.Evidence, strength = s.Strength, alreadyClaimed = claimed.Contains(SkillResolver.Normalize(s.Name)) }) });
+    }
+    [HttpPost("{id:guid}/confirm-skills")]
+    public async Task<IActionResult> Confirm(Guid id, SetSkillsRequest req)
+    {
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        if (resume == null) return NotFound();
+        var proposals = Proposals(resume).ToDictionary(s => SkillResolver.Normalize(s.Name));
+        if (req.SkillNames == null || req.SkillNames.Any(n => string.IsNullOrWhiteSpace(n) || !proposals.ContainsKey(SkillResolver.Normalize(n)))) return BadRequest("Select skills from the current proposal.");
+        var skills = await resolver.ResolveSkillsAsync(req.SkillNames);
+        var existing = await db.UserSkills.ToListAsync();
+        foreach (var skill in skills)
         {
-            status = resume.ExtractionStatus,
-            message = resume.ExtractionStatus == "failed" ? latest?.Message : null,
-            createdAt = latest?.CreatedAt,
-        });
+            var proposal = proposals[skill.Name];
+            var link = existing.FirstOrDefault(s => s.SkillId == skill.Id);
+            if (link == null) { link = new UserSkill { UserId = UserId, SkillId = skill.Id }; db.UserSkills.Add(link); }
+            if (proposal.Strength >= link.EvidenceStrength) { link.EvidenceText = proposal.Evidence; link.EvidenceStrength = proposal.Strength; }
+        }
+        resume.ProposedSkillsJson = null; await db.SaveChangesAsync(); return Ok(skills.Select(s => s.Name));
+    }
+    [HttpPost("{id:guid}/dismiss-skills")]
+    public async Task<IActionResult> Dismiss(Guid id)
+    {
+        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
+        if (resume == null) return NotFound();
+        resume.ProposedSkillsJson = null; await db.SaveChangesAsync(); return NoContent();
     }
 }

@@ -1,37 +1,22 @@
-﻿using JobTracker.Api.Dtos;
+using JobTracker.Api.Dtos;
 using JobTracker.Api.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-
+using Microsoft.AspNetCore.RateLimiting;
 namespace JobTracker.Api.Controllers;
-
-[ApiController]
-[Route("api/auth")]
+[ApiController, Route("api/auth")]
 public class AuthController(UserManager<IdentityUser<Guid>> users, ITokenService tokens) : ControllerBase
 {
-    //[HttpPost("register")]
-    //public async Task<ActionResult<AuthResponse>> Register(RegisterRequest req)
-    //{
-    //    var user = new IdentityUser<Guid> { UserName = req.Email, Email = req.Email };
-    //    var result = await users.CreateAsync(user, req.Password);
-    //    if (!result.Succeeded)
-    //        return BadRequest(result.Errors.Select(e => e.Description));
-
-    //    await users.AddToRoleAsync(user, "user");
-    //    var roles = await users.GetRolesAsync(user);
-    //    var token = tokens.CreateToken(user, roles);
-    //    return Ok(new AuthResponse(token, user.Email!, roles.FirstOrDefault() ?? "user"));
-    //}
-
-    [HttpPost("login")]
-    public async Task<ActionResult<AuthResponse>> Login(LoginRequest req)
+    [AllowAnonymous, EnableRateLimiting("login"), HttpPost("login")]
+    public async Task<IActionResult> Login(LoginRequest req)
     {
         var user = await users.FindByEmailAsync(req.Email);
-        if (user is null || !await users.CheckPasswordAsync(user, req.Password))
-            return Unauthorized("Invalid email or password");
-
+        if (user is null || await users.IsLockedOutAsync(user)) return Unauthorized("Invalid email or password");
+        if (!await users.CheckPasswordAsync(user, req.Password))
+        { await users.AccessFailedAsync(user); return Unauthorized("Invalid email or password"); }
+        await users.ResetAccessFailedCountAsync(user);
         var roles = await users.GetRolesAsync(user);
-        var token = tokens.CreateToken(user, roles);
-        return Ok(new AuthResponse(token, user.Email!, roles.FirstOrDefault() ?? "user"));
+        return Ok(new { token = tokens.CreateToken(user, roles), userId = user.Id, email = user.Email, role = roles.FirstOrDefault() ?? "user" });
     }
 }

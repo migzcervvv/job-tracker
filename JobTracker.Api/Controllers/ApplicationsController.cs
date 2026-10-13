@@ -1,362 +1,192 @@
-﻿using JobTracker.Api.Data;
+using System.Security.Claims;
+using System.Text.Json;
+using JobTracker.Api.Data;
 using JobTracker.Api.Dtos;
 using JobTracker.Api.Models;
 using JobTracker.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.Net.Http;
-using System.Security.Claims;
-using System.Text.Json;
 
 namespace JobTracker.Api.Controllers;
-
-[ApiController]
-[Route("api/applications")]
-[Authorize]
-public class ApplicationsController(AppDbContext db,
-    IHttpClientFactory httpClientFactory,
-    IConfiguration config,
-    IServiceScopeFactory scopeFactory,
-    IFitScorer fitScorer) : ControllerBase
+[ApiController, Route("api/applications"), Authorize]
+public class ApplicationsController(AppDbContext db, IFitScorer fitScorer, AutomationService automation) : ControllerBase
 {
-    private Guid CurrentUserId =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-
-    public record ApplicationResponse(
-        Guid Id, string Title, string Company, string? JobUrl, string RawDescription,
-        ApplicationStatus Status, DateTimeOffset AppliedDate, DateTimeOffset UpdatedAt,
-        int? FitPercentage // null when the application has no required skills tagged yet
-    );
-
+    private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     [HttpGet]
-    public async Task<IActionResult> List()
+    public async Task<IActionResult> List(int page = 1, int pageSize = 100, string? search = null, ApplicationStatus? status = null)
     {
-        var apps = await db.Applications
-                .OrderByDescending(a => a.AppliedDate)
-                .ToListAsync();
-        var scores = await fitScorer.ScoreAsync(CurrentUserId, apps.Select(a => a.Id).ToList());
-
-        return Ok(apps.Select(a => new ApplicationListItem(
-                a.Id, a.Title, a.Company, a.JobUrl, a.Status, a.AppliedDate, a.UpdatedAt,
-                scores.TryGetValue(a.Id, out var f) ? f.Overall : null)));
+        var query = db.Applications.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(search)) { var term = search.Trim().ToLower(); query = query.Where(a => a.Title.ToLower().Contains(term) || a.Company.ToLower().Contains(term)); }
+        if (status.HasValue) query = query.Where(a => a.Status == status);
+        var apps = await query.OrderByDescending(a => a.AppliedDate).ThenBy(a => a.Id).Skip((Math.Max(page, 1) - 1) * Math.Clamp(pageSize, 1, 200)).Take(Math.Clamp(pageSize, 1, 200)).ToListAsync();
+        var scores = await fitScorer.ScoreAsync(UserId, apps.Select(a => a.Id).ToList());
+        return Ok(apps.Select(a => View(a, scores.GetValueOrDefault(a.Id))));
     }
-
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] CreateApplicationRequest req)
+    public async Task<IActionResult> Create(CreateApplicationRequest req)
     {
-        // Soft dedup: a near-identical submission within 60s reads as an
-        // accidental resubmit (e.g. a false-error retry), not a second
-        // real application. Return the existing row instead of creating one.
-        var recentCutoff = DateTimeOffset.UtcNow.AddSeconds(-60);
-        var duplicate = await db.Applications.FirstOrDefaultAsync(a =>
-            a.Title.ToLower() == req.Title.ToLower() &&
-            (a.Company ?? "").ToLower() == (req.Company ?? "").ToLower() &&
-            a.CreatedAt >= recentCutoff);
-
-        if (duplicate is not null)
-            return Ok(new { application = ToResponse(duplicate), wasDuplicate = true, automationTriggered = false });
-
-        var app = new Application
+        if (Validate(req) is string error) return BadRequest(error);
+        if (req.ResumeId != null && !await db.Resumes.AnyAsync(r => r.Id == req.ResumeId)) return BadRequest("Resume not found.");
+        if (req.RequestId is Guid requestId)
         {
-            Id = Guid.NewGuid(),
-            UserId = CurrentUserId,
-            Company = req.Company ?? "",
-            Title = req.Title,
-            JobUrl = req.JobUrl,
-            RawDescription = req.RawDescription,
-            AppliedDate = DateTimeOffset.UtcNow,
-        };
+            var prior = await db.Applications.FirstOrDefaultAsync(a => a.Id == requestId);
+            if (prior != null) return Ok(new { application = View(prior), wasDuplicate = true, automationTriggered = prior.ExtractionRunId != null, runId = prior.ExtractionRunId });
+        }
+        var app = new Application { Id = req.RequestId ?? Guid.NewGuid(), UserId = UserId, Title = req.Title.Trim(), Company = req.Company?.Trim() ?? "", JobUrl = req.JobUrl, RawDescription = req.RawDescription, Status = req.Status, AppliedDate = req.AppliedDate ?? DateTimeOffset.UtcNow, ResumeId = req.ResumeId };
         db.Applications.Add(app);
-
-        db.TimelineEvents.Add(new TimelineEvent
-        {
-            Id = Guid.NewGuid(),
-            ApplicationId = app.Id,
-            Type = "created",
-            Body = "Application created",
-        });
-
+        Event(app, "created", "Application created");
+        var run = automation.Configured("skill_extraction") && !string.IsNullOrWhiteSpace(app.RawDescription) ? automation.Queue(UserId, "skill_extraction", app) : null;
         await db.SaveChangesAsync();
-
-        var webhookUrl = config["N8n:SkillExtractionWebhookUrl"];
-        var automationTriggered = !string.IsNullOrEmpty(webhookUrl);
-
-        if (automationTriggered)
-            TriggerSkillExtraction(app.Id, app.RawDescription);
-
-        return Ok(new { application = ToResponse(app), wasDuplicate = false, automationTriggered });
+        return Ok(new { application = View(app), wasDuplicate = false, automationTriggered = run != null, runId = run?.Id });
     }
-
-    // Shared by Create() and the retry endpoint below — same fire-and-forget
-    // pattern, own DbContext scope since the request's `db` won't survive
-    // past the response.
-    private void TriggerSkillExtraction(Guid applicationId, string rawDescription)
+    [HttpPut("{id:guid}")]
+    public async Task<IActionResult> Update(Guid id, EditApplicationRequest req)
     {
-        var webhookUrl = config["N8n:SkillExtractionWebhookUrl"];
-        if (string.IsNullOrEmpty(webhookUrl)) return;
-
-        _ = Task.Run(async () =>
-        {
-            using var scope = scopeFactory.CreateScope();
-            var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-            scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-            {
-                Id = Guid.NewGuid(),
-                Type = "skill_extraction",
-                ApplicationId = applicationId,
-                Status = "triggered",
-            });
-            await scopedDb.SaveChangesAsync();
-
-            try
-            {
-                var client = httpClientFactory.CreateClient("n8n");
-                client.Timeout = TimeSpan.FromSeconds(10);
-                var res = await client.PostAsJsonAsync(webhookUrl,
-                    new { applicationId, rawDescription });
-
-                scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-                {
-                    Id = Guid.NewGuid(),
-                    Type = "skill_extraction",
-                    ApplicationId = applicationId,
-                    Status = res.IsSuccessStatusCode ? "succeeded" : "failed",
-                    Message = res.IsSuccessStatusCode ? null : $"n8n responded HTTP {(int)res.StatusCode}",
-                });
-                await scopedDb.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-                {
-                    Id = Guid.NewGuid(),
-                    Type = "skill_extraction",
-                    ApplicationId = applicationId,
-                    Status = "failed",
-                    Message = ex.Message,
-                });
-                await scopedDb.SaveChangesAsync();
-            }
-        });
-    }
-
-    [HttpPost("{id}/retry-skill-extraction")]
-    public async Task<IActionResult> RetrySkillExtraction(Guid id)
-    {
+        if (Validate(req.Application) is string error) return BadRequest(error);
         var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
-        if (app is null) return NotFound();
-
-        var webhookUrl = config["N8n:SkillExtractionWebhookUrl"];
-        if (string.IsNullOrEmpty(webhookUrl))
-            return BadRequest("Skill extraction is not configured.");
-
-        TriggerSkillExtraction(app.Id, app.RawDescription);
-        return Accepted(new { status = "triggered" });
+        if (app == null) return NotFound();
+        if (req.Version != app.Version) return Conflict("This application changed. Reload before saving.");
+        var input = req.Application;
+        if (input.ResumeId != null && !await db.Resumes.AnyAsync(r => r.Id == input.ResumeId)) return BadRequest("Resume not found.");
+        var descriptionChanged = app.RawDescription != input.RawDescription;
+        app.Title = input.Title.Trim(); app.Company = input.Company?.Trim() ?? ""; app.JobUrl = input.JobUrl;
+        app.RawDescription = input.RawDescription; app.AppliedDate = input.AppliedDate ?? app.AppliedDate; app.Status = input.Status;
+        app.ResumeId = input.ResumeId;
+        if (descriptionChanged)
+        {
+            app.RequirementsEmbedding = null;
+            db.ApplicationSkills.RemoveRange(await db.ApplicationSkills.Where(s => s.ApplicationId == id).ToListAsync());
+            app.ExtractionRunId = null;
+            if (automation.Configured("skill_extraction") && !string.IsNullOrWhiteSpace(app.RawDescription)) automation.Queue(UserId, "skill_extraction", app);
+        }
+        Event(app, "edited", "Application details updated");
+        await db.SaveChangesAsync();
+        return await GetDetail(id);
     }
-
-    [HttpDelete("{id}")]
+    [HttpPatch("{id:guid}/follow-up")]
+    public async Task<IActionResult> FollowUp(Guid id, FollowUpRequest req)
+    {
+        if (req.NextAction?.Length > 2000 || req.ContactName?.Length > 200 || (req.ContactEmail?.Length > 0 && !new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(req.ContactEmail))) return BadRequest("Invalid follow-up or contact details.");
+        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
+        if (app == null) return NotFound();
+        if (req.Version != app.Version) return Conflict("This application changed. Reload before saving.");
+        app.NextAction = req.NextAction; app.FollowUpAt = req.FollowUpAt; app.SnoozedUntil = req.SnoozedUntil;
+        app.ContactName = req.ContactName; app.ContactEmail = req.ContactEmail;
+        if (req.ResponseReceived) app.LastEmployerResponseAt = DateTimeOffset.UtcNow;
+        Event(app, req.ResponseReceived ? "response_received" : "follow_up", req.ResponseReceived ? "Employer response recorded" : "Follow-up updated");
+        await db.SaveChangesAsync();
+        return await GetDetail(id);
+    }
+    [HttpPost("{id:guid}/notes")]
+    public async Task<IActionResult> AddNote(Guid id, NoteRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.Body) || req.Body.Length > 10000) return BadRequest("A note of up to 10,000 characters is required.");
+        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
+        if (app == null) return NotFound();
+        Event(app, "note", req.Body.Trim()); await db.SaveChangesAsync();
+        return await GetDetail(id);
+    }
+    [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id)
     {
         var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
-        if (app is null) return NotFound();
-
-        db.Applications.Remove(app); // cascades StageDetails, TimelineEvents, ApplicationSkills
-        await db.SaveChangesAsync();
-        return NoContent();
+        if (app == null) return NotFound();
+        db.AutomationRuns.RemoveRange(await db.AutomationRuns.Where(r => r.ApplicationId == id).ToListAsync());
+        db.AutomationLogEntries.RemoveRange(await db.AutomationLogEntries.Where(r => r.ApplicationId == id).ToListAsync());
+        db.Applications.Remove(app); await db.SaveChangesAsync(); return NoContent();
     }
-
-    [HttpPatch("{id}/status")]
-    public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] UpdateStatusRequest req)
+    [HttpPatch("{id:guid}/status")]
+    public async Task<IActionResult> UpdateStatus(Guid id, UpdateStatusRequest req)
     {
-        if (!Enum.IsDefined(typeof(ApplicationStatus), req.Status))
-            return BadRequest("Unknown status value.");
-
+        if (!Enum.IsDefined(req.Status)) return BadRequest("Unknown status.");
         var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
-        if (app is null) return NotFound();
-
-        var oldStatus = app.Status;
-        if (oldStatus == req.Status)
-            return Ok(ToResponse(app)); // no-op, nothing to log
-
-        app.Status = req.Status;
-        app.UpdatedAt = DateTimeOffset.UtcNow;
-
-        db.TimelineEvents.Add(new TimelineEvent
+        if (app == null) return NotFound();
+        if (req.Version != app.Version) return Conflict("This application changed. Reload before saving.");
+        if (app.Status != req.Status)
         {
-            Id = Guid.NewGuid(),
-            ApplicationId = app.Id,
-            Type = "status_changed",
-            Body = $"{oldStatus} → {req.Status}",
-        });
-
-        await db.SaveChangesAsync();
-        return Ok(ToResponse(app));
+            var old = app.Status;
+            if (old == ApplicationStatus.Saved && req.Status == ApplicationStatus.Applied) app.AppliedDate = DateTimeOffset.UtcNow;
+            app.Status = req.Status; Event(app, "status_changed", $"{old} → {req.Status}"); await db.SaveChangesAsync();
+        }
+        return await GetDetail(id);
     }
-
-    private static ApplicationResponse ToResponse(Application a, int? fitPercentage = null) => new(
-        a.Id, a.Title, a.Company, a.JobUrl, a.RawDescription, a.Status, a.AppliedDate, a.UpdatedAt, fitPercentage
-    );
-
-    [HttpGet("{id}")]
+    [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetDetail(Guid id)
     {
-        var app = await db.Applications
-            .Include(a => a.TimelineEvents)
-            .Include(a => a.StageDetails)
-            .FirstOrDefaultAsync(a => a.Id == id);
-
-        if (app is null) return NotFound();
-
-        var requiredSkillIds = await db.ApplicationSkills.Where(x => x.ApplicationId == id).Select(x => x.SkillId).ToListAsync();
-        var mySkillIds = (await db.UserSkills.Where(us => us.UserId == CurrentUserId).Select(us => us.SkillId).ToListAsync()).ToHashSet();
-        int? fitPercentage = requiredSkillIds.Count > 0
-            ? (int)Math.Round(100.0 * requiredSkillIds.Count(id => mySkillIds.Contains(id)) / requiredSkillIds.Count)
-            : null;
-
-        var response = new ApplicationDetailResponse(
-            app.Id, app.Title, app.Company, app.JobUrl, app.RawDescription,
-            app.Status, app.AppliedDate, app.UpdatedAt, fitPercentage,
-            app.TimelineEvents.OrderByDescending(t => t.CreatedAt)
-                .Select(t => new TimelineEventResponse(t.Id, t.Type, t.Body, t.CreatedAt)).ToList(),
-            app.StageDetails.OrderByDescending(s => s.CreatedAt)
-                .Select(s => new StageDetailResponse(s.Id, s.Stage, s.FieldsJson, s.CreatedAt)).ToList()
-        );
-
-        return Ok(response);
+        var app = await db.Applications.Include(a => a.TimelineEvents).Include(a => a.StageDetails).FirstOrDefaultAsync(a => a.Id == id);
+        if (app == null) return NotFound();
+        var score = (await fitScorer.ScoreAsync(UserId, new() { id })).GetValueOrDefault(id);
+        return Ok(View(app, score));
     }
-
-    [HttpPut("{id}/stage-details")]
-    public async Task<IActionResult> UpsertStageDetail(Guid id, [FromBody] UpsertStageDetailRequest req)
+    public static object View(Application a, FitBreakdown? fit = null) => new
+    {
+        a.Id, a.Title, a.Company, a.JobUrl, a.RawDescription, a.Status, a.AppliedDate, a.UpdatedAt, a.Version,
+        a.ResumeId, a.NextAction, a.FollowUpAt, a.SnoozedUntil, a.LastEmployerResponseAt, a.ContactName, a.ContactEmail,
+        fitPercentage = fit?.Overall, fit, extractionRunId = a.ExtractionRunId,
+        timeline = a.TimelineEvents.OrderByDescending(t => t.CreatedAt).Select(t => new { t.Id, t.Type, t.Body, t.CreatedAt }),
+        stageDetails = a.StageDetails.OrderBy(s => s.CreatedAt).Select(StageView)
+    };
+    public static object StageView(StageDetail s) => new { s.Id, s.Stage, s.FieldsJson, s.CreatedAt, s.Version, s.GeneratedQuestions, s.QuestionRunId };
+    [HttpPut("{id:guid}/stage-details")]
+    public async Task<IActionResult> UpsertStageDetail(Guid id, UpsertStageDetailRequest req)
+    {
+        if (!Enum.IsDefined(req.Stage) || req.Stage == ApplicationStatus.Saved) return BadRequest("Invalid stage.");
+        if (InputValidation.StageFields(req.Stage, req.Fields) is string error) return BadRequest(error);
+        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
+        if (app == null) return NotFound();
+        var target = req.StageDetailId.HasValue ? await db.StageDetails.FirstOrDefaultAsync(s => s.Id == req.StageDetailId && s.ApplicationId == id) :
+            req.Stage == ApplicationStatus.InterviewScheduled ? null : await db.StageDetails.FirstOrDefaultAsync(s => s.ApplicationId == id && s.Stage == req.Stage);
+        if (req.StageDetailId.HasValue && target == null) return NotFound();
+        if (target != null && (target.Stage != req.Stage || req.Version != target.Version)) return Conflict("Stage details changed. Reload before saving.");
+        if (target == null) { target = new StageDetail { Id = Guid.NewGuid(), ApplicationId = id, Stage = req.Stage }; db.StageDetails.Add(target); }
+        target.FieldsJson = JsonSerializer.Serialize(req.Fields); target.Version = Guid.NewGuid();
+        Event(app, "stage_updated", $"{req.Stage} details updated"); await db.SaveChangesAsync();
+        return Ok(StageView(target));
+    }
+    [HttpGet("{id:guid}/automation-status")]
+    public async Task<IActionResult> GetAutomationStatus(Guid id, string type = "skill_extraction", Guid? runId = null)
+    {
+        if (!await db.Applications.AnyAsync(a => a.Id == id)) return NotFound();
+        var query = db.AutomationRuns.Where(r => r.ApplicationId == id && r.Type == type);
+        var run = runId.HasValue ? await query.FirstOrDefaultAsync(r => r.Id == runId) : await query.OrderByDescending(r => r.CreatedAt).FirstOrDefaultAsync();
+        return Ok(AutomationService.View(run));
+    }
+    [HttpPost("{id:guid}/retry-skill-extraction")]
+    public async Task<IActionResult> RetrySkillExtraction(Guid id)
     {
         var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
-        if (app is null) return NotFound();
-
-        var fieldsJson = JsonSerializer.Serialize(req.Fields);
-
-        StageDetail? target;
-        if (req.StageDetailId is Guid targetId)
-        {
-            target = await db.StageDetails.FirstOrDefaultAsync(s => s.Id == targetId && s.ApplicationId == id);
-            if (target is null) return NotFound();
-        }
-        else if (req.Stage == ApplicationStatus.InterviewScheduled)
-        {
-            target = null;
-        }
-        else
-        {
-            target = await db.StageDetails.FirstOrDefaultAsync(s => s.ApplicationId == id && s.Stage == req.Stage);
-        }
-
-        if (target is null)
-        {
-            target = new StageDetail { Id = Guid.NewGuid(), ApplicationId = id, Stage = req.Stage };
-            db.StageDetails.Add(target);
-        }
-
-        target.FieldsJson = fieldsJson;
-        await db.SaveChangesAsync();
-
-        return Ok(new StageDetailResponse(target.Id, target.Stage, target.FieldsJson, target.CreatedAt));
+        if (app == null) return NotFound();
+        if (!automation.Configured("skill_extraction")) return BadRequest("Skill extraction is not configured.");
+        var run = automation.Queue(UserId, "skill_extraction", app); app.Version = Guid.NewGuid();
+        await db.SaveChangesAsync(); return Accepted(AutomationService.View(run));
     }
-
-    // type defaults to "skill_extraction" for backward compatibility; pass
-    // ?type=interview_questions to poll that automation instead.
-    [HttpGet("{id}/automation-status")]
-    public async Task<IActionResult> GetAutomationStatus(Guid id, [FromQuery] string type = "skill_extraction")
+    [HttpPost("{id:guid}/interview-questions")]
+    public async Task<IActionResult> GenerateInterviewQuestions(Guid id, GenerateQuestionsRequest req)
     {
         var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
-        if (app is null) return NotFound();
-
-        var latest = await db.AutomationLogEntries
-            .Where(e => e.ApplicationId == id && e.Type == type)
-            .OrderByDescending(e => e.CreatedAt)
-            .FirstOrDefaultAsync();
-
-        if (latest is null) return Ok(new { status = (string?)null });
-        return Ok(new { status = latest.Status, message = latest.Message, createdAt = latest.CreatedAt });
+        var stage = await db.StageDetails.FirstOrDefaultAsync(s => s.Id == req.StageDetailId && s.ApplicationId == id && s.Stage == ApplicationStatus.InterviewScheduled);
+        if (app == null || stage == null) return NotFound("Save this interview round before generating questions.");
+        if (!automation.Configured("interview_questions")) return BadRequest("Interview question generation is not configured.");
+        var run = automation.Queue(UserId, "interview_questions", app, stage: stage); stage.Version = Guid.NewGuid();
+        await db.SaveChangesAsync(); return Accepted(AutomationService.View(run));
     }
-
-    public record GenerateQuestionsRequest(int? Round);
-
-    [HttpPost("{id}/interview-questions")]
-    public async Task<IActionResult> GenerateInterviewQuestions(Guid id, [FromBody] GenerateQuestionsRequest req)
+    private void Event(Application app, string type, string body)
     {
-        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
-        if (app is null) return NotFound();
-
-        var webhookUrl = config["N8n:InterviewQuestionsWebhookUrl"];
-        if (string.IsNullOrEmpty(webhookUrl))
-            return BadRequest("Interview question generation is not configured.");
-
-        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == CurrentUserId);
-
-        var applicationId = app.Id;
-        var jobDescription = app.RawDescription;
-        var jobTitle = app.Title;
-        var company = app.Company;
-        var resumeText = profile?.ResumeRawText ?? "";
-        var round = req.Round ?? 1;
-
-        _ = Task.Run(async () =>
-        {
-            using var scope = scopeFactory.CreateScope();
-            var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-            scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-            {
-                Id = Guid.NewGuid(),
-                Type = "interview_questions",
-                ApplicationId = applicationId,
-                Status = "triggered",
-            });
-            await scopedDb.SaveChangesAsync();
-
-            try
-            {
-                var client = httpClientFactory.CreateClient("n8n");
-                client.Timeout = TimeSpan.FromSeconds(30);
-                var res = await client.PostAsJsonAsync(webhookUrl, new
-                {
-                    applicationId,
-                    jobTitle,
-                    company,
-                    jobDescription,
-                    resumeText,
-                    round,
-                });
-
-                scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-                {
-                    Id = Guid.NewGuid(),
-                    Type = "interview_questions",
-                    ApplicationId = applicationId,
-                    Status = res.IsSuccessStatusCode ? "succeeded" : "failed",
-                    Message = res.IsSuccessStatusCode ? null : $"HTTP {(int)res.StatusCode}",
-                });
-                await scopedDb.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                scopedDb.AutomationLogEntries.Add(new AutomationLogEntry
-                {
-                    Id = Guid.NewGuid(),
-                    Type = "interview_questions",
-                    ApplicationId = applicationId,
-                    Status = "failed",
-                    Message = ex.Message,
-                });
-                await scopedDb.SaveChangesAsync();
-            }
-        });
-
-        return Accepted(new { status = "triggered" });
+        app.UpdatedAt = DateTimeOffset.UtcNow; app.Version = Guid.NewGuid();
+        db.TimelineEvents.Add(new TimelineEvent { Id = Guid.NewGuid(), ApplicationId = app.Id, Type = type, Body = body });
     }
+    public static string? Validate(CreateApplicationRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.Title) || req.Title.Length > 200 || req.Company?.Length > 200 || req.RawDescription.Length > 100000) return "Invalid title, company, or description.";
+        if (!InputValidation.WebUrl(req.JobUrl) || !Enum.IsDefined(req.Status)) return "Invalid posting URL or status.";
+        if (req.AppliedDate > DateTimeOffset.UtcNow.AddDays(1)) return "Applied date cannot be in the future.";
+        return null;
+    }
+    public record GenerateQuestionsRequest(Guid StageDetailId);
+    public record EditApplicationRequest(Guid Version, CreateApplicationRequest Application);
+    public record FollowUpRequest(Guid Version, string? NextAction, DateTimeOffset? FollowUpAt, DateTimeOffset? SnoozedUntil, bool ResponseReceived, string? ContactName, string? ContactEmail);
+    public record NoteRequest(string Body);
 }
-public record ApplicationListItem(
-    Guid Id, string Title, string Company, string? JobUrl,
-    ApplicationStatus Status, DateTimeOffset AppliedDate, DateTimeOffset UpdatedAt,
-    int? FitPercentage);
-public record CreateApplicationRequest(string Title, string? Company, string? JobUrl, string RawDescription);
+public record CreateApplicationRequest(string Title, string? Company, string? JobUrl, string RawDescription,
+    ApplicationStatus Status = ApplicationStatus.Applied, DateTimeOffset? AppliedDate = null, Guid? ResumeId = null, Guid? RequestId = null);

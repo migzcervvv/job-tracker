@@ -1,247 +1,143 @@
-﻿using JobTracker.Api.Data;
+using System.Data;
+using System.Text.Json;
+using JobTracker.Api.Data;
 using JobTracker.Api.Dtos;
 using JobTracker.Api.Models;
 using JobTracker.Api.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 
-[ApiController]
-[Route("api/internal")]
-public class InternalController(AppDbContext db, IConfiguration config, ISkillResolver skillResolver) : ControllerBase
+[ApiController, Route("api/internal"), AllowAnonymous, ServiceFilter(typeof(AutomationKeyFilter))]
+public class InternalController(AppDbContext db, ISkillResolver resolver) : ControllerBase
 {
-    private bool IsAuthorized() =>
-        Request.Headers.TryGetValue("X-Automation-Key", out var key) &&
-        key == config["Automation:ApiKey"];
-
-    // InternalController.cs — new action
-    [HttpPut("resumes/{id}/extraction")]
-    public async Task<IActionResult> SetResumeExtraction(Guid id, [FromBody] ResumeExtractionRequest req)
-    {
-        if (!IsAuthorized()) return Unauthorized();
-
-        var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
-        if (resume is null) return NotFound();
-
-        resume.ExtractedText = req.ExtractedText;
-        resume.ProposedSkillsJson = System.Text.Json.JsonSerializer.Serialize(req.SkillNames);
-        resume.ExtractionStatus = (req.SkillNames?.Count ?? 0) == 0 && string.IsNullOrWhiteSpace(req.ExtractedText)
-            ? "failed"
-            : "succeeded";
-
-        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == resume.UserId);
-        if (profile is null)
-        {
-            profile = new UserProfile { UserId = resume.UserId };
-            db.UserProfiles.Add(profile);
-        }
-
-        profile.ExperienceYears = (int)Math.Round(
-            req.ExperienceYears ?? 0.0,
-            MidpointRounding.AwayFromZero
-        );
-        
-        profile.Education = req.Education;
-        profile.ResumeRawText = req.ExtractedText;
-        if (req.SeniorityLevel is int n && Enum.IsDefined(typeof(SeniorityLevel), n))
-        {
-            profile.SeniorityLevel = (SeniorityLevel)n;
-        }
-        if (req.ResumeEmbedding is { Count: > 0 })
-        {
-            profile.ResumeEmbedding = new Pgvector.Vector(req.ResumeEmbedding.ToArray());
-        }
-
-        await db.SaveChangesAsync();
-
-        return Ok(new { resume.Id, skillCount = req.SkillNames?.Count ?? 0, extractedTextLength = req.ExtractedText?.Length ?? 0 });
-    }
-
     [HttpPost("applications/{id:guid}/requirements")]
-    public async Task<IActionResult> UpdateRequirements(Guid id, [FromBody] UpdateApplicationRequirementsRequest dto)
+    public IActionResult LegacyRequirements(Guid id) => StatusCode(410, "Use the versioned skills callback with runId and requirementsEmbedding.");
+    [HttpPut("applications/{id:guid}/skills")]
+    public Task<IActionResult> Skills(Guid id, SkillCallback req) => Complete(req.RunId, "skill_extraction", id, null, async run =>
     {
-        var application = await db.Applications.FindAsync(id);
-        if (application is null) return NotFound();
+        if (req.Skills == null || req.Skills.Count > 200 || req.Skills.Any(s => string.IsNullOrWhiteSpace(s.Name) || s.Name.Length > 100 || s.Importance is < 1 or > 3) || !InputValidation.Vector(req.RequirementsEmbedding)) return BadRequest("Invalid skills or 1536-dimensional embedding.");
+        var app = await db.Applications.IgnoreQueryFilters().FirstOrDefaultAsync(a => a.Id == id && a.UserId == run.UserId);
+        if (app == null) return NotFound();
+        if (app.ExtractionRunId != run.Id) return Conflict("This run has been replaced.");
+        var grouped = req.Skills.GroupBy(s => SkillResolver.Normalize(s.Name)).ToDictionary(g => g.Key, g => g.Max(s => s.Importance));
+        var skills = await resolver.ResolveSkillsAsync(grouped.Keys.ToList());
+        var existing = await db.ApplicationSkills.IgnoreQueryFilters().Where(s => s.ApplicationId == id).ToListAsync();
+        var wanted = skills.Select(s => s.Id).ToHashSet();
+        db.ApplicationSkills.RemoveRange(existing.Where(s => !wanted.Contains(s.SkillId)));
+        foreach (var skill in skills)
+        {
+            var link = existing.FirstOrDefault(s => s.SkillId == skill.Id);
+            if (link == null) { link = new ApplicationSkill { ApplicationId = id, SkillId = skill.Id }; db.ApplicationSkills.Add(link); }
+            link.Importance = grouped[skill.Name];
+        }
+        app.RequirementsEmbedding = req.RequirementsEmbedding == null ? null : new Pgvector.Vector(req.RequirementsEmbedding);
+        app.Version = Guid.NewGuid();
+        return Ok(new { skillCount = skills.Count });
+    });
 
-        application.RequiredExperienceYears = dto.RequiredExperienceYears;
-        application.SeniorityLevel = dto.SeniorityLevel.HasValue
-            ? (SeniorityLevel)dto.SeniorityLevel.Value
-            : null;
-        application.EducationRequirement = dto.EducationRequirement;
-        application.JobEmbedding = dto.JobEmbedding is { Length: 1536 }
-            ? new Pgvector.Vector(dto.JobEmbedding)
-            : null;
+    [HttpPut("applications/{id:guid}/interview-questions")]
+    public Task<IActionResult> Questions(Guid id, QuestionsCallback req) => Complete(req.RunId, "interview_questions", id, null, async run =>
+    {
+        if (string.IsNullOrWhiteSpace(req.Questions) || req.Questions.Length > 50000 || run.StageDetailId != req.StageDetailId) return BadRequest("Invalid questions or round.");
+        var stage = await db.StageDetails.IgnoreQueryFilters().FirstOrDefaultAsync(s => s.Id == req.StageDetailId && s.ApplicationId == id && s.Stage == ApplicationStatus.InterviewScheduled);
+        if (stage == null) return NotFound();
+        if (stage.QuestionRunId != run.Id) return Conflict("This run has been replaced.");
+        stage.GeneratedQuestions = req.Questions;
+        stage.Version = Guid.NewGuid();
+        db.TimelineEvents.Add(new TimelineEvent { Id = Guid.NewGuid(), ApplicationId = id, Type = "automation", Body = "Interview questions generated" });
+        return Ok(new { stage.Id });
+    });
 
+    [HttpPut("resumes/{id:guid}/extraction")]
+    public Task<IActionResult> ResumeExtraction(Guid id, ResumeCallback req) => Complete(req.RunId, "resume_extraction", null, id, async run =>
+    {
+        if (string.IsNullOrWhiteSpace(req.ExtractedText) || req.ExtractedText.Length > 200000 || req.Skills == null || req.Skills.Count > 200 ||
+            req.Skills.Any(s => string.IsNullOrWhiteSpace(s.Name) || s.Name.Length > 100 || s.Evidence?.Length > 5000 || !double.IsFinite(s.Strength) || s.Strength < 0 || s.Strength > 1) ||
+            !InputValidation.Vector(req.ResumeEmbedding)) return BadRequest("Invalid extraction or 1536-dimensional embedding.");
+        var resume = await db.Resumes.IgnoreQueryFilters().FirstOrDefaultAsync(r => r.Id == id && r.UserId == run.UserId);
+        if (resume == null) return NotFound();
+        if (resume.ExtractionRunId != run.Id) return Conflict("This run has been replaced.");
+        resume.ExtractedText = req.ExtractedText;
+        resume.Embedding = req.ResumeEmbedding == null ? null : new Pgvector.Vector(req.ResumeEmbedding);
+        resume.ProposedSkillsJson = JsonSerializer.Serialize(req.Skills.GroupBy(s => SkillResolver.Normalize(s.Name))
+            .Select(g => new SkillEvidenceDto { Name = g.Key, Evidence = g.OrderByDescending(s => s.Strength).First().Evidence, Strength = g.Max(s => s.Strength) }));
+        resume.ExtractionStatus = "succeeded";
+        // A callback never switches the active profile. Activation is a separate user action.
+        return Ok(new { resume.Id });
+    });
+
+    [HttpPost("runs/{id:guid}/state")]
+    public async Task<IActionResult> State(Guid id, StateCallback req)
+    {
+        if (req.Status is not ("running" or "failed")) return BadRequest("Status must be running or failed.");
+        var run = await db.AutomationRuns.IgnoreQueryFilters().FirstOrDefaultAsync(r => r.Id == id);
+        if (run == null) return NotFound();
+        if (AutomationRun.IsTerminal(run.Status)) return Ok(AutomationService.View(run));
+        run.Status = req.Status; run.ErrorCode = req.Status == "failed" ? "workflow_failed" : null;
+        run.UpdatedAt = DateTimeOffset.UtcNow; run.Version = Guid.NewGuid();
         await db.SaveChangesAsync();
-        return NoContent();
+        return Ok(AutomationService.View(run));
     }
 
-    [HttpPut("applications/{id}/skills")]
-public async Task<IActionResult> SetApplicationSkillsFromAutomation(Guid id, [FromBody] UpdateApplicationSkillsRequest req)
-{
-    if (!IsAuthorized()) return Unauthorized();
-
-    var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
-    if (app is null) return NotFound();
-
-    var names = req.Skills.Select(s => s.Name).ToList();
-    var resolved = await skillResolver.ResolveSkillsAsync(names);
-    var idByName = resolved.ToDictionary(s => s.Name, s => s.Id);
-
-    var existingLinks = await db.ApplicationSkills.Where(x => x.ApplicationId == id).ToListAsync();
-    db.ApplicationSkills.RemoveRange(existingLinks);
-
-    foreach (var dto in req.Skills)
+    private async Task<IActionResult> Complete(Guid id, string type, Guid? applicationId, Guid? resumeId, Func<AutomationRun, Task<IActionResult>> action)
     {
-        var normalized = dto.Name.Trim().ToLowerInvariant();
-        if (!idByName.TryGetValue(normalized, out var skillId)) continue;
-        db.ApplicationSkills.Add(new ApplicationSkill
-        {
-            ApplicationId = id, SkillId = skillId, Importance = dto.Importance,
-        });
-    }
-
-    if (req.RequirementsEmbedding is { Length: 1536 })
-        app.RequirementsEmbedding = new Pgvector.Vector(req.RequirementsEmbedding);
-
-    await db.SaveChangesAsync();
-    return Ok(new { skillCount = req.Skills.Count, embedded = app.RequirementsEmbedding != null });
-}
-
-    // InternalController.cs
-    [HttpPut("applications/{id}/interview-questions")]
-    public async Task<IActionResult> SetInterviewQuestions(Guid id, [FromBody] InterviewQuestionsRequest req)
-    {
-        if (!IsAuthorized()) return Unauthorized();
-
-        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
-        if (app is null) return NotFound();
-
-        var detail = await db.StageDetails
-            .Where(s => s.ApplicationId == id && s.Stage == ApplicationStatus.InterviewScheduled)
-            .OrderByDescending(s => s.CreatedAt)
-            .FirstOrDefaultAsync();
-
-        Dictionary<string, object?> fields;
-        if (detail is null)
-        {
-            detail = new StageDetail
-            {
-                Id = Guid.NewGuid(),
-                ApplicationId = id,
-                Stage = ApplicationStatus.InterviewScheduled,
-            };
-            db.StageDetails.Add(detail);
-            fields = new Dictionary<string, object?> { ["round"] = req.Round };
-        }
-        else
-        {
-            fields = JsonSerializer.Deserialize<Dictionary<string, object?>>(detail.FieldsJson)
-                     ?? new Dictionary<string, object?>();
-        }
-
-        // Append rather than overwrite — the user may have typed their own notes.
-        var existing = fields.TryGetValue("prepNotes", out var pn) ? pn?.ToString() ?? "" : "";
-        fields["prepNotes"] = string.IsNullOrWhiteSpace(existing)
-            ? req.Questions
-            : $"{existing}\n\n--- Suggested questions ---\n{req.Questions}";
-
-        detail.FieldsJson = JsonSerializer.Serialize(fields);
-
-        db.TimelineEvents.Add(new TimelineEvent
-        {
-            Id = Guid.NewGuid(),
-            ApplicationId = id,
-            Type = "note",
-            Body = $"Interview questions generated for round {req.Round}",
-        });
-
+        await using var transaction = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync() : null;
+        var run = await db.AutomationRuns.IgnoreQueryFilters().FirstOrDefaultAsync(r => r.Id == id && r.Type == type && r.ApplicationId == applicationId && r.ResumeId == resumeId);
+        if (run == null) return NotFound("Unknown run or resource.");
+        if (run.Status == "succeeded") return Ok(AutomationService.View(run));
+        if (AutomationRun.IsTerminal(run.Status) || run.DeadlineAt < DateTimeOffset.UtcNow) return Conflict("Run is no longer active.");
+        var result = await action(run);
+        if (result is not OkObjectResult) return result;
+        run.Status = "succeeded"; run.ErrorCode = null; run.UpdatedAt = DateTimeOffset.UtcNow; run.Version = Guid.NewGuid();
         await db.SaveChangesAsync();
-        return Ok(new { questionsLength = req.Questions.Length });
+        if (transaction != null) await transaction.CommitAsync();
+        return result;
     }
 
     [HttpGet("reminders/stale")]
-    public async Task<IActionResult> GetStaleApplications([FromQuery] int days = 7)
+    public async Task<IActionResult> Stale(int days = 7)
     {
-        if (!IsAuthorized()) return Unauthorized();
-
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
-        var terminal = new[]
-        {
-        ApplicationStatus.Rejected, ApplicationStatus.OfferAccepted,
-        ApplicationStatus.OfferDeclined, ApplicationStatus.Withdrawn, ApplicationStatus.Archived,
-    };
-
-        // IgnoreQueryFilters: no JWT on this request, so the ambient tenant filter
-        // is inert anyway — being explicit documents that this is deliberately
-        // cross-user, and it's why the response groups by user.
-        var apps = await db.Applications
-            .IgnoreQueryFilters()
-            .Include(a => a.TimelineEvents)
-            .Where(a => !terminal.Contains(a.Status))
-            .ToListAsync();
-
-        var stale = apps
-            .Select(a => new
-            {
-                a.Id,
-                a.UserId,
-                a.Title,
-                a.Company,
-                LastActivity = a.TimelineEvents.Any() ? a.TimelineEvents.Max(t => t.CreatedAt) : a.CreatedAt,
-            })
-            .Where(a => a.LastActivity < cutoff)
-            .ToList();
-
-        var userIds = stale.Select(s => s.UserId).Distinct().ToList();
-        var emails = await db.Users.Where(u => userIds.Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, u => u.Email);
-
-        return Ok(stale.GroupBy(s => s.UserId).Select(g => new
-        {
-            userId = g.Key,
-            email = emails.GetValueOrDefault(g.Key),
-            applications = g.Select(a => new
-            {
-                a.Id,
-                a.Title,
-                a.Company,
-                daysSinceActivity = (int)(DateTimeOffset.UtcNow - a.LastActivity).TotalDays,
-            }).OrderByDescending(a => a.daysSinceActivity),
-        }));
+        if (days is < 1 or > 365) return BadRequest("Days must be 1–365.");
+        var now = DateTimeOffset.UtcNow; var cutoff = now.AddDays(-days);
+        var apps = await db.Applications.IgnoreQueryFilters().Where(a => a.Status >= ApplicationStatus.Applied && a.Status <= ApplicationStatus.Offered && a.UpdatedAt < cutoff && (a.SnoozedUntil == null || a.SnoozedUntil <= now)).ToListAsync();
+        var enabled = await db.UserProfiles.IgnoreQueryFilters().Where(p => p.RemindersEnabled).Select(p => p.UserId).ToListAsync();
+        return Ok(await Recipients(apps.Where(a => enabled.Contains(a.UserId))));
     }
-
+    [HttpGet("reminders/deadlines")]
+    public async Task<IActionResult> Deadlines()
+    {
+        var enabled = await db.UserProfiles.IgnoreQueryFilters().Where(p => p.RemindersEnabled).Select(p => p.UserId).ToListAsync();
+        var apps = await db.Applications.IgnoreQueryFilters().Include(a => a.StageDetails).Where(a => enabled.Contains(a.UserId) && a.Status >= ApplicationStatus.Applied && a.Status <= ApplicationStatus.Offered).ToListAsync();
+        return Ok(await Recipients(apps.Where(a => a.SnoozedUntil == null || a.SnoozedUntil <= DateTimeOffset.UtcNow), true));
+    }
     [HttpGet("digest/weekly")]
-    public async Task<IActionResult> GetWeeklyDigest()
+    public async Task<IActionResult> Digest()
     {
-        if (!IsAuthorized()) return Unauthorized();
-
-        var weekAgo = DateTimeOffset.UtcNow.AddDays(-7);
-        var apps = await db.Applications.IgnoreQueryFilters().Include(a => a.TimelineEvents).ToListAsync();
-        var userIds = apps.Select(a => a.UserId).Distinct().ToList();
-        var emails = await db.Users.Where(u => userIds.Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, u => u.Email);
-
-        return Ok(apps.GroupBy(a => a.UserId).Select(g => new
-        {
-            userId = g.Key,
-            email = emails.GetValueOrDefault(g.Key),
-            newThisWeek = g.Count(a => a.AppliedDate >= weekAgo),
-            statusChanges = g.Sum(a => a.TimelineEvents.Count(t => t.Type == "status_changed" && t.CreatedAt >= weekAgo)),
-            interviewsScheduled = g.Count(a => a.Status == ApplicationStatus.InterviewScheduled),
-            offers = g.Count(a => a.Status == ApplicationStatus.Offered),
-            activeTotal = g.Count(a => a.Status < ApplicationStatus.Rejected),
-        }));
+        var profiles = await db.UserProfiles.IgnoreQueryFilters().Where(p => p.WeeklyDigestEnabled).ToListAsync();
+        var ids = profiles.Select(p => p.UserId).ToList();
+        var apps = await db.Applications.IgnoreQueryFilters().Include(a => a.TimelineEvents).Where(a => ids.Contains(a.UserId)).ToListAsync();
+        var emails = await db.Users.Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.Email);
+        var since = DateTimeOffset.UtcNow.AddDays(-7);
+        return Ok(profiles.Select(p => new { p.UserId, email = emails.GetValueOrDefault(p.UserId), p.TimeZone,
+            deliveryKey = $"weekly:{p.UserId}:{System.Globalization.ISOWeek.GetYear(since.UtcDateTime)}:{System.Globalization.ISOWeek.GetWeekOfYear(since.UtcDateTime)}",
+            newThisWeek = apps.Count(a => a.UserId == p.UserId && a.Status != ApplicationStatus.Saved && a.AppliedDate >= since),
+            activeTotal = apps.Count(a => a.UserId == p.UserId && a.Status >= ApplicationStatus.Applied && a.Status <= ApplicationStatus.Offered),
+            statusChanges = apps.Where(a => a.UserId == p.UserId).Sum(a => a.TimelineEvents.Count(t => t.Type == "status_changed" && t.CreatedAt >= since)) }));
     }
-    public record InterviewQuestionsRequest(int Round, string Questions);
-    public record UpdateApplicationSkillsRequest(List<SkillImportanceDto> Skills, float[]? RequirementsEmbedding);
-    public record ResumeExtractionRequest(
-        string ExtractedText,
-        [property: JsonPropertyName("skills")] List<SkillEvidenceDto> SkillNames,
-        double? ExperienceYears,
-        int? SeniorityLevel,
-        string? Education,
-        List<float>? ResumeEmbedding
-    );
+    private async Task<object> Recipients(IEnumerable<Application> applications, bool deadlines = false)
+    {
+        var apps = applications.ToList(); var ids = apps.Select(a => a.UserId).Distinct().ToList();
+        var emails = await db.Users.Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.Email);
+        var zones = await db.UserProfiles.IgnoreQueryFilters().Where(p => ids.Contains(p.UserId)).ToDictionaryAsync(p => p.UserId, p => p.TimeZone);
+        return apps.GroupBy(a => a.UserId).Select(g => new { userId = g.Key, email = emails.GetValueOrDefault(g.Key), timeZone = zones.GetValueOrDefault(g.Key, "UTC"),
+            applications = g.Select(a => new { a.Id, a.Title, a.Company, a.NextAction, a.FollowUpAt,
+                daysSinceActivity = (int)(DateTimeOffset.UtcNow - a.UpdatedAt).TotalDays,
+                deliveryKey = $"{(deadlines ? "deadline" : "stale")}:{a.Id}:{DateTimeOffset.UtcNow:yyyy-MM-dd}",
+                stageDetails = deadlines ? a.StageDetails.Select(s => new { s.Stage, s.FieldsJson }) : null }) });
+    }
+    public record SkillCallback(Guid RunId, List<SkillImportanceDto> Skills, float[]? RequirementsEmbedding);
+    public record QuestionsCallback(Guid RunId, Guid StageDetailId, string Questions);
+    public record ResumeCallback(Guid RunId, string ExtractedText, List<SkillEvidenceDto> Skills, float[]? ResumeEmbedding);
+    public record StateCallback(string Status);
 }

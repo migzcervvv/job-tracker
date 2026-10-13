@@ -1,43 +1,23 @@
-﻿using JobTracker.Api.Data;
+using JobTracker.Api.Data;
 using JobTracker.Api.Models;
 using Microsoft.EntityFrameworkCore;
-
-namespace JobTracker.Api.Services
+namespace JobTracker.Api.Services;
+public interface ISkillResolver { Task<List<Skill>> ResolveSkillsAsync(List<string> names); }
+public class SkillResolver(AppDbContext db) : ISkillResolver
 {
-    // Services/ISkillResolver.cs
-    public interface ISkillResolver
+    public static string Normalize(string name) => name.Trim().ToLowerInvariant();
+    public async Task<List<Skill>> ResolveSkillsAsync(List<string> names)
     {
-        Task<List<Skill>> ResolveSkillsAsync(List<string> names);
-    }
-
-    public class SkillResolver : ISkillResolver
-    {
-        private readonly AppDbContext _db;
-        public SkillResolver(AppDbContext db) => _db = db;
-
-        public async Task<List<Skill>> ResolveSkillsAsync(List<string> names)
+        var normalized = names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(Normalize).Distinct().ToList();
+        if (normalized.Count > 200 || normalized.Any(n => n.Length > 100)) throw new ArgumentException("Too many skills or skill name too long.");
+        var existing = await db.Skills.Where(s => normalized.Contains(s.Name)).ToListAsync();
+        foreach (var name in normalized.Except(existing.Select(s => s.Name)))
         {
-            var normalized = names
-                .Select(n => n.Trim().ToLowerInvariant())
-                .Where(n => n.Length > 0)
-                .Distinct()
-                .ToList();
-
-            var existing = await _db.Skills.Where(s => normalized.Contains(s.Name)).ToListAsync();
-            var existingNames = existing.Select(s => s.Name).ToHashSet();
-
-            var toCreate = normalized
-                .Where(n => !existingNames.Contains(n))
-                .Select(n => new Skill { Id = Guid.NewGuid(), Name = n })
-                .ToList();
-
-            if (toCreate.Count > 0)
-            {
-                _db.Skills.AddRange(toCreate);
-                await _db.SaveChangesAsync();
-            }
-
-            return existing.Concat(toCreate).ToList();
+            var id = Guid.NewGuid();
+            if (db.Database.IsNpgsql())
+                await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"Skills\" (\"Id\", \"Name\") VALUES ({id}, {name}) ON CONFLICT (\"Name\") DO NOTHING");
+            else { var skill = new Skill { Id = id, Name = name }; db.Skills.Add(skill); existing.Add(skill); }
         }
+        return db.Database.IsNpgsql() ? await db.Skills.Where(s => normalized.Contains(s.Name)).ToListAsync() : existing;
     }
 }

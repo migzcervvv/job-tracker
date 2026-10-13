@@ -22,6 +22,7 @@ public class TokenService : ITokenService
         {
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(ClaimTypes.Email, user.Email ?? ""),
+            new("security_stamp", user.SecurityStamp ?? ""),
 
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
@@ -29,12 +30,12 @@ public class TokenService : ITokenService
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var expiryDays = _config.GetValue<int>("Jwt:ExpiryDays", 7);
+        var expiryMinutes = Math.Clamp(_config.GetValue<int>("Jwt:ExpiryMinutes", 60), 5, 120);
 
         var token = new JwtSecurityToken(
             issuer: _config["Jwt:Issuer"],
             claims: claims,
-            expires: DateTime.UtcNow.AddDays(expiryDays),
+            expires: DateTime.UtcNow.AddMinutes(expiryMinutes),
             signingCredentials: creds
         );
 

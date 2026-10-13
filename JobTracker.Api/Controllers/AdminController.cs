@@ -1,7 +1,6 @@
-﻿// Controllers/AdminController.cs
+using System.Data;
 using System.Security.Claims;
 using JobTracker.Api.Data;
-using JobTracker.Api.Dtos;
 using JobTracker.Api.Models;
 using JobTracker.Api.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -10,182 +9,139 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace JobTracker.Api.Controllers;
-
-[ApiController]
-[Route("api/admin")]
-[Authorize(Roles = "admin")]
-public class AdminController(
-    AppDbContext db, UserManager<IdentityUser<Guid>> users,
-    IAppStartTime startTime, IN8nHealthChecker n8nHealth) : ControllerBase
+[ApiController, Route("api/admin"), Authorize(Roles = "admin")]
+public class AdminController(AppDbContext db, UserManager<IdentityUser<Guid>> users, IAppStartTime startTime, IN8nHealthChecker n8nHealth) : ControllerBase
 {
-    private readonly UserManager<IdentityUser<Guid>> _users = users;
-
-    // ---------- Users ----------
-
+    private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     [HttpGet("users")]
     public async Task<IActionResult> ListUsers()
     {
-        var users = await _users.Users.ToListAsync();
+        var records = await users.Users.OrderBy(u => u.Email).Take(500).ToListAsync();
+        var counts = await db.Applications.IgnoreQueryFilters().GroupBy(a => a.UserId).Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(g => g.Key, g => g.Count);
         var result = new List<object>();
-        foreach (var u in users)
-        {
-            var roles = await _users.GetRolesAsync(u);
-            var appCount = await db.Applications.IgnoreQueryFilters().CountAsync(a => a.UserId == u.Id);
-            result.Add(new { u.Id, u.Email, Role = roles.FirstOrDefault() ?? "user", ApplicationCount = appCount });
-        }
+        foreach (var user in records) result.Add(new { user.Id, user.Email, role = (await users.GetRolesAsync(user)).FirstOrDefault() ?? "user", applicationCount = counts.GetValueOrDefault(user.Id) });
         return Ok(result);
     }
-
-    [HttpPut("users/{id}/role")]
-    public async Task<IActionResult> SetUserRole(Guid id, [FromBody] SetRoleRequest req)
+    [HttpPut("users/{id:guid}/role")]
+    public async Task<IActionResult> SetUserRole(Guid id, SetRoleRequest req)
     {
-        var user = await _users.FindByIdAsync(id.ToString());
-        if (user is null) return NotFound();
-
-        var currentRoles = await _users.GetRolesAsync(user);
-        await _users.RemoveFromRolesAsync(user, currentRoles);
-        await _users.AddToRoleAsync(user, req.Role);
-
-        return Ok();
+        if (req.Role is not ("user" or "admin")) return BadRequest("Role must be user or admin.");
+        if (id == UserId) return BadRequest("You cannot change your own role.");
+        await using var tx = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable) : null;
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id);
+        if (user == null) return NotFound();
+        var current = await db.UserRoles.Where(r => r.UserId == id).ToListAsync();
+        var roles = await db.Roles.ToListAsync();
+        if (current.Any(r => roles.Any(role => role.Id == r.RoleId && role.Name == "test"))) return BadRequest("Demo accounts cannot be promoted.");
+        var adminRole = roles.Single(r => r.Name == "admin");
+        if (req.Role != "admin" && current.Any(r => r.RoleId == adminRole.Id) && await db.UserRoles.CountAsync(r => r.RoleId == adminRole.Id) <= 1) return Conflict("The last administrator cannot be demoted.");
+        var desired = roles.Single(r => r.Name == req.Role);
+        db.UserRoles.RemoveRange(current.Where(r => r.RoleId != desired.Id));
+        if (!current.Any(r => r.RoleId == desired.Id)) db.UserRoles.Add(new IdentityUserRole<Guid> { UserId = id, RoleId = desired.Id });
+        user.SecurityStamp = Guid.NewGuid().ToString(); user.ConcurrencyStamp = Guid.NewGuid().ToString();
+        await db.SaveChangesAsync(); if (tx != null) await tx.CommitAsync(); return Ok();
     }
-
-    [HttpDelete("users/{id}")]
+    [HttpDelete("users/{id:guid}")]
     public async Task<IActionResult> DeleteUser(Guid id)
     {
-        var user = await _users.FindByIdAsync(id.ToString());
-        if (user is null) return NotFound();
-
-        // Applications.UserId has no DB-level FK to AspNetUsers (it's a plain
-        // Guid column), so deleting the Identity user would NOT cascade —
-        // remove their data explicitly first, in the right order.
-        var apps = await db.Applications.IgnoreQueryFilters().Where(a => a.UserId == id).ToListAsync();
-        db.Applications.RemoveRange(apps);
-        await db.SaveChangesAsync();
-
-        await _users.DeleteAsync(user);
-        return NoContent();
-    }
-
-    // ---------- Health ----------
-
-    [HttpGet("health")]
-    public async Task<IActionResult> GetHealth()
-    {
-        var uptime = DateTimeOffset.UtcNow - startTime.StartedAt;
-
-        bool dbHealthy;
-        try { dbHealthy = await db.Database.CanConnectAsync(); }
-        catch { dbHealthy = false; }
-
-        var n8nStatus = await n8nHealth.CheckAsync();
-
-        return Ok(new
-        {
-            api = "healthy",
-            uptimeSeconds = (long)uptime.TotalSeconds,
-            database = dbHealthy ? "healthy" : "unreachable",
-            n8n = n8nStatus,
-        });
-    }
-
-    // ---------- Automation log ----------
-
-    [HttpGet("automation-log")]
-    public async Task<IActionResult> GetAutomationLog([FromQuery] int take = 50)
-    {
-        var entries = await db.AutomationLogEntries
-            .OrderByDescending(e => e.CreatedAt)
-            .Take(take)
-            .ToListAsync();
-        return Ok(entries);
-    }
-
-    // ---------- Skills ----------
-
-    [HttpGet("skills")]
-    public async Task<IActionResult> ListSkills([FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-    {
-        page = Math.Max(page, 1);
-        pageSize = Math.Clamp(pageSize, 1, 100);
-
-        var skills = await db.Skills.ToListAsync();
-        var appCounts = await db.ApplicationSkills.GroupBy(x => x.SkillId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync();
-        var userCounts = await db.UserSkills.GroupBy(x => x.SkillId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync();
-
-        var all = skills.Select(s => new
-        {
-            s.Id,
-            s.Name,
-            applicationUsage = appCounts.FirstOrDefault(c => c.Key == s.Id)?.Count ?? 0,
-            userUsage = userCounts.FirstOrDefault(c => c.Key == s.Id)?.Count ?? 0,
-        });
-
-        if (!string.IsNullOrWhiteSpace(search))
-            all = all.Where(s => s.Name.Contains(search, StringComparison.OrdinalIgnoreCase));
-
-        var ordered = all
-            .OrderBy(s => s.Name)
-            .ToList();
-        var totalCount = ordered.Count;
-        var pageItems = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
-
-        return Ok(new { items = pageItems, totalCount, page, pageSize });
-    }
-
-    [HttpPost("skills/merge")]
-    public async Task<IActionResult> MergeSkills([FromBody] MergeSkillsRequest req)
-    {
-        if (req.SourceSkillId == req.TargetSkillId)
-            return BadRequest("Cannot merge a skill into itself.");
-
-        var source = await db.Skills.FindAsync(req.SourceSkillId);
-        var target = await db.Skills.FindAsync(req.TargetSkillId);
-        if (source is null || target is null) return NotFound();
-
-        // Composite-key entities are safer to Remove+Add than to mutate in
-        // place — EF Core's change tracker doesn't handle partial-PK
-        // mutation cleanly, and this also naturally avoids duplicate-PK
-        // violations when an application/user already has both skills tagged.
-        var appLinks = await db.ApplicationSkills.Where(x => x.SkillId == req.SourceSkillId).ToListAsync();
-        foreach (var link in appLinks)
-        {
-            var alreadyLinked = await db.ApplicationSkills
-                .AnyAsync(x => x.ApplicationId == link.ApplicationId && x.SkillId == req.TargetSkillId);
-            db.ApplicationSkills.Remove(link);
-            if (!alreadyLinked)
-                db.ApplicationSkills.Add(new ApplicationSkill { ApplicationId = link.ApplicationId, SkillId = req.TargetSkillId });
-        }
-
-        var userLinks = await db.UserSkills.Where(x => x.SkillId == req.SourceSkillId).ToListAsync();
-        foreach (var link in userLinks)
-        {
-            var alreadyLinked = await db.UserSkills
-                .AnyAsync(x => x.UserId == link.UserId && x.SkillId == req.TargetSkillId);
-            db.UserSkills.Remove(link);
-            if (!alreadyLinked)
-                db.UserSkills.Add(new UserSkill { UserId = link.UserId, SkillId = req.TargetSkillId });
-        }
-
-        db.Skills.Remove(source);
-        await db.SaveChangesAsync();
-
-        return Ok(new { mergedInto = target.Name });
+        if (id == UserId) return BadRequest("You cannot delete your own account.");
+        await using var tx = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable) : null;
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id);
+        if (user == null) return NotFound();
+        var adminRole = await db.Roles.FirstOrDefaultAsync(r => r.Name == "admin");
+        if (adminRole != null && await db.UserRoles.AnyAsync(r => r.UserId == id && r.RoleId == adminRole.Id) && await db.UserRoles.CountAsync(r => r.RoleId == adminRole.Id) <= 1) return Conflict("The last administrator cannot be deleted.");
+        var apps = await db.Applications.IgnoreQueryFilters().Include(a => a.TimelineEvents).Include(a => a.StageDetails).Where(a => a.UserId == id).ToListAsync();
+        var appIds = apps.Select(a => a.Id).ToList();
+        var resumes = await db.Resumes.IgnoreQueryFilters().Where(r => r.UserId == id).ToListAsync();
+        foreach (var resume in resumes) db.StorageDeletions.Add(new StorageDeletion { StoragePath = resume.StoragePath });
+        db.Resumes.RemoveRange(resumes);
+        db.UserProfiles.RemoveRange(await db.UserProfiles.IgnoreQueryFilters().Where(p => p.UserId == id).ToListAsync());
+        db.UserSkills.RemoveRange(await db.UserSkills.IgnoreQueryFilters().Where(s => s.UserId == id).ToListAsync());
+        db.ApplicationSkills.RemoveRange(await db.ApplicationSkills.IgnoreQueryFilters().Where(s => appIds.Contains(s.ApplicationId)).ToListAsync());
+        db.AutomationRuns.RemoveRange(await db.AutomationRuns.IgnoreQueryFilters().Where(r => r.UserId == id).ToListAsync());
+        db.AutomationLogEntries.RemoveRange(await db.AutomationLogEntries.Where(r => r.ApplicationId != null && appIds.Contains(r.ApplicationId.Value)).ToListAsync());
+        db.Applications.RemoveRange(apps); db.Users.Remove(user);
+        await db.SaveChangesAsync(); if (tx != null) await tx.CommitAsync();
+        return Accepted(new { status = "account_deleted", storageCleanup = "queued" });
     }
     [HttpPost("users")]
-    public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest req)
+    public async Task<IActionResult> CreateUser(CreateUserRequest req)
     {
-        var user = new IdentityUser<Guid> { UserName = req.Email, Email = req.Email };
-        var result = await _users.CreateAsync(user, req.Password);
+        if (req.Role is not ("user" or "admin")) return BadRequest("Role must be user or admin.");
+        var user = new IdentityUser<Guid> { Email = req.Email, UserName = req.Email };
+        var result = await users.CreateAsync(user, req.Password);
         if (!result.Succeeded) return BadRequest(result.Errors.Select(e => e.Description));
-
-        var role = string.IsNullOrWhiteSpace(req.Role) ? "user" : req.Role;
-        await _users.AddToRoleAsync(user, role);
-
-        return Ok(new { user.Id, user.Email, role });
+        result = await users.AddToRoleAsync(user, req.Role);
+        if (!result.Succeeded) { await users.DeleteAsync(user); return BadRequest(result.Errors.Select(e => e.Description)); }
+        return Ok(new { user.Id, user.Email, req.Role });
     }
-
-    public record CreateUserRequest(string Email, string Password, string? Role);
+    [HttpGet("health")]
+    public async Task<IActionResult> Health() => Ok(new { api = "healthy", uptimeSeconds = (long)(DateTimeOffset.UtcNow - startTime.StartedAt).TotalSeconds, database = await db.Database.CanConnectAsync() ? "healthy" : "unreachable", n8n = await n8nHealth.CheckAsync() });
+    [HttpGet("automation-log")]
+    public async Task<IActionResult> Log(int take = 50, string? status = null)
+    {
+        var query = db.AutomationRuns.IgnoreQueryFilters().AsNoTracking();
+        if (status != null) query = query.Where(r => r.Status == status);
+        return Ok(await query.OrderByDescending(r => r.CreatedAt).Take(Math.Clamp(take, 1, 200)).Select(r => new { r.Id, r.Type, r.Status, r.ApplicationId, r.ResumeId, r.StageDetailId, r.CreatedAt, r.UpdatedAt, r.Attempts, message = r.ErrorCode }).ToListAsync());
+    }
+    [HttpPost("automation/{id:guid}/retry")]
+    public async Task<IActionResult> Retry(Guid id)
+    {
+        // Re-dispatch only a still-current resource with a new run ID; old deliveries remain invalid.
+        var old = await db.AutomationRuns.IgnoreQueryFilters().FirstOrDefaultAsync(r => r.Id == id);
+        if (old == null) return NotFound();
+        if (!AutomationRun.IsTerminal(old.Status)) return Conflict("Run is still active.");
+        var app = old.ApplicationId == null ? null : await db.Applications.IgnoreQueryFilters().FirstOrDefaultAsync(a => a.Id == old.ApplicationId);
+        var resume = old.ResumeId == null ? null : await db.Resumes.IgnoreQueryFilters().FirstOrDefaultAsync(r => r.Id == old.ResumeId);
+        var stage = old.StageDetailId == null ? null : await db.StageDetails.IgnoreQueryFilters().FirstOrDefaultAsync(s => s.Id == old.StageDetailId);
+        if (app == null && resume == null || old.Type == "interview_questions" && stage == null) return NotFound();
+        var currentId = old.Type == "skill_extraction" ? app?.ExtractionRunId : old.Type == "resume_extraction" ? resume?.ExtractionRunId : stage?.QuestionRunId;
+        if (currentId != old.Id) return Conflict("A newer run already exists.");
+        var run = new AutomationRun { UserId = old.UserId, Type = old.Type, ApplicationId = old.ApplicationId, ResumeId = old.ResumeId, StageDetailId = old.StageDetailId };
+        db.AutomationRuns.Add(run);
+        if (run.Type == "skill_extraction") { app!.ExtractionRunId = run.Id; app.Version = Guid.NewGuid(); }
+        if (resume != null) { resume.ExtractionRunId = run.Id; resume.ExtractionStatus = "queued"; }
+        if (stage != null) { stage.QuestionRunId = run.Id; stage.Version = Guid.NewGuid(); }
+        await db.SaveChangesAsync(); return Accepted(AutomationService.View(run));
+    }
+    [HttpGet("skills")]
+    public async Task<IActionResult> ListSkills(string? search, int page = 1, int pageSize = 20)
+    {
+        page = Math.Max(page, 1); pageSize = Math.Clamp(pageSize, 1, 100);
+        var query = db.Skills.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(search)) { var term = search.Trim().ToLower(); query = query.Where(s => s.Name.Contains(term)); }
+        var totalCount = await query.CountAsync();
+        var items = await query.OrderBy(s => s.Name).Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(s => new { s.Id, s.Name, applicationUsage = db.ApplicationSkills.IgnoreQueryFilters().Count(l => l.SkillId == s.Id), userUsage = db.UserSkills.IgnoreQueryFilters().Count(l => l.SkillId == s.Id) }).ToListAsync();
+        return Ok(new { items, totalCount, page, pageSize });
+    }
+    [HttpPost("skills/merge")]
+    public async Task<IActionResult> MergeSkills(MergeSkillsRequest req)
+    {
+        if (req.SourceSkillId == req.TargetSkillId) return BadRequest("Choose different skills.");
+        await using var tx = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync() : null;
+        var source = await db.Skills.FindAsync(req.SourceSkillId); var target = await db.Skills.FindAsync(req.TargetSkillId);
+        if (source == null || target == null) return NotFound();
+        var appLinks = await db.ApplicationSkills.IgnoreQueryFilters().Where(l => l.SkillId == source.Id || l.SkillId == target.Id).ToListAsync();
+        foreach (var link in appLinks.Where(l => l.SkillId == source.Id))
+        {
+            var replacement = appLinks.FirstOrDefault(l => l.ApplicationId == link.ApplicationId && l.SkillId == target.Id);
+            if (replacement == null) { replacement = new ApplicationSkill { ApplicationId = link.ApplicationId, SkillId = target.Id }; db.ApplicationSkills.Add(replacement); }
+            replacement.Importance = Math.Max(replacement.Importance, link.Importance); db.ApplicationSkills.Remove(link);
+        }
+        var userLinks = await db.UserSkills.IgnoreQueryFilters().Where(l => l.SkillId == source.Id || l.SkillId == target.Id).ToListAsync();
+        foreach (var link in userLinks.Where(l => l.SkillId == source.Id))
+        {
+            var replacement = userLinks.FirstOrDefault(l => l.UserId == link.UserId && l.SkillId == target.Id);
+            if (replacement == null) { replacement = new UserSkill { UserId = link.UserId, SkillId = target.Id }; db.UserSkills.Add(replacement); }
+            replacement.Level = (SkillLevel)Math.Max((int)replacement.Level, (int)link.Level);
+            if (link.EvidenceStrength >= replacement.EvidenceStrength) { replacement.EvidenceText = link.EvidenceText; replacement.EvidenceStrength = link.EvidenceStrength; }
+            db.UserSkills.Remove(link);
+        }
+        db.Skills.Remove(source); await db.SaveChangesAsync(); if (tx != null) await tx.CommitAsync();
+        return Ok(new { mergedInto = target.Name });
+    }
+    public record CreateUserRequest(string Email, string Password, string Role = "user");
 }
-
 public record SetRoleRequest(string Role);
 public record MergeSkillsRequest(Guid SourceSkillId, Guid TargetSkillId);

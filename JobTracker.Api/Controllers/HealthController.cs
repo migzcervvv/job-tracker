@@ -1,20 +1,22 @@
-﻿using JobTracker.Api.Services;
+using JobTracker.Api.Data;
+using JobTracker.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-
+using Microsoft.EntityFrameworkCore;
 namespace JobTracker.Api.Controllers;
-
-// Anonymous on purpose — the frontend needs to hit this before login and
-// while a cold-started API is still waking up. Do not add [Authorize] here.
-[ApiController]
-[Route("api/health")]
-[AllowAnonymous]
-public class HealthController(IN8nHealthChecker n8nHealth) : ControllerBase
+[ApiController, Route("api/health"), AllowAnonymous]
+public class HealthController(IN8nHealthChecker n8nHealth, AppDbContext db) : ControllerBase
 {
-    [HttpGet("n8n")]
-    public async Task<IActionResult> GetN8nHealth()
+    [HttpGet("live")] public IActionResult Live() => Ok(new { status = "healthy" });
+    [HttpGet("ready")]
+    public async Task<IActionResult> Ready()
     {
-        var status = await n8nHealth.CheckAsync();
-        return Ok(new { status });
+        try
+        {
+            if (!await db.Database.CanConnectAsync() || db.Database.IsRelational() && (await db.Database.GetPendingMigrationsAsync()).Any()) return StatusCode(503, new { status = "unreachable" });
+            return Ok(new { status = "healthy" });
+        }
+        catch { return StatusCode(503, new { status = "unreachable" }); }
     }
+    [HttpGet("n8n")] public async Task<IActionResult> N8n() => Ok(new { status = await n8nHealth.CheckAsync() });
 }

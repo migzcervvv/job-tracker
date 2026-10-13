@@ -1,63 +1,35 @@
-﻿// New: Controllers/AnalyticsController.cs, or add to SkillsController if you'd
-// rather keep analytics endpoints together — either works, pick one and stay consistent
 using JobTracker.Api.Data;
 using JobTracker.Api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-
-[ApiController]
-[Route("api/analytics")]
-[Authorize]
+[ApiController, Route("api/analytics"), Authorize]
 public class AnalyticsController(AppDbContext db) : ControllerBase
 {
     [HttpGet("pipeline-alerts")]
-    public async Task<IActionResult> GetPipelineAlerts(
-        [FromQuery] int staleDays = 7,
-        [FromQuery] int noReplyDays = 60)
+    public async Task<IActionResult> GetPipelineAlerts(int staleDays = 7, int noReplyDays = 60)
     {
+        if (staleDays is < 1 or > 365 || noReplyDays is < 1 or > 365) return BadRequest("Thresholds must be between 1 and 365 days.");
         var now = DateTimeOffset.UtcNow;
-        var weekStart = now.AddDays(-7);
-        var staleCutoff = now.AddDays(-staleDays);
-        var noReplyCutoff = now.AddDays(-noReplyDays);
-
-        var terminalStatuses = new[]
-        {
-            ApplicationStatus.Rejected, ApplicationStatus.OfferAccepted,
-            ApplicationStatus.OfferDeclined, ApplicationStatus.Withdrawn, ApplicationStatus.Archived,
-        };
-
-        var apps = await db.Applications
-            .Include(a => a.TimelineEvents)
-            .Where(a => !terminalStatuses.Contains(a.Status))
-            .ToListAsync();
-
-        var appliedThisWeek = await db.Applications.CountAsync(a => a.AppliedDate >= weekStart);
-
-        var stale = apps
-            .Select(a => new
-            {
-                a.Id,
-                a.Title,
-                a.Company,
-                LastActivity = a.TimelineEvents.Any() ? a.TimelineEvents.Max(t => t.CreatedAt) : a.CreatedAt,
-            })
-            .Where(a => a.LastActivity < staleCutoff)
-            .OrderBy(a => a.LastActivity)
-            .Select(a => new { a.Id, a.Title, a.Company, daysSinceActivity = (int)(now - a.LastActivity).TotalDays })
-            .ToList();
-
-        var noReply = apps
-            .Where(a => a.TimelineEvents.Count <= 1 && a.AppliedDate < noReplyCutoff) // only the "created" event ever logged
-            .OrderBy(a => a.AppliedDate)
-            .Select(a => new { a.Id, a.Title, a.Company, daysSinceApplied = (int)(now - a.AppliedDate).TotalDays })
-            .ToList();
-
+        var apps = await db.Applications.Where(a => a.Status >= ApplicationStatus.Applied && a.Status <= ApplicationStatus.Offered && (a.SnoozedUntil == null || a.SnoozedUntil <= now)).ToListAsync();
         return Ok(new
         {
-            appliedThisWeek,
-            stale,
-            noReply,
+            appliedThisWeek = await db.Applications.CountAsync(a => a.Status != ApplicationStatus.Saved && a.AppliedDate >= now.AddDays(-7)),
+            stale = apps.Where(a => a.UpdatedAt < now.AddDays(-staleDays)).OrderBy(a => a.UpdatedAt).Select(a => new { a.Id, a.Title, a.Company, daysSinceActivity = (int)(now - a.UpdatedAt).TotalDays }),
+            noReply = apps.Where(a => a.LastEmployerResponseAt == null && a.AppliedDate < now.AddDays(-noReplyDays)).OrderBy(a => a.AppliedDate).Select(a => new { a.Id, a.Title, a.Company, daysSinceApplied = (int)(now - a.AppliedDate).TotalDays }),
+            followUps = apps.Where(a => a.FollowUpAt <= now).Select(a => new { a.Id, a.Title, a.Company, a.NextAction, a.FollowUpAt })
+        });
+    }
+    [HttpGet("funnel")]
+    public async Task<IActionResult> Funnel()
+    {
+        var apps = await db.Applications.Include(a => a.TimelineEvents).ToListAsync();
+        var now = DateTimeOffset.UtcNow;
+        return Ok(new
+        {
+            total = apps.Count, responded = apps.Count(a => a.LastEmployerResponseAt != null),
+            stages = apps.GroupBy(a => a.Status).Select(g => new { status = g.Key, count = g.Count(),
+                averageDaysInCurrentStage = g.Average(a => (now - (a.TimelineEvents.Where(t => t.Type == "status_changed").Select(t => (DateTimeOffset?)t.CreatedAt).Max() ?? a.CreatedAt)).TotalDays) })
         });
     }
 }

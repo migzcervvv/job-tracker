@@ -4,6 +4,16 @@ namespace JobTracker.Api.Models;
 
 public class Application
 {
+    [System.ComponentModel.DataAnnotations.ConcurrencyCheck]
+    public Guid Version { get; set; } = Guid.NewGuid();
+    public Guid? ExtractionRunId { get; set; }
+    public Guid? ResumeId { get; set; }
+    public string? NextAction { get; set; }
+    public DateTimeOffset? FollowUpAt { get; set; }
+    public DateTimeOffset? SnoozedUntil { get; set; }
+    public DateTimeOffset? LastEmployerResponseAt { get; set; }
+    public string? ContactName { get; set; }
+    public string? ContactEmail { get; set; }
     public Guid Id { get; set; }
     public Guid UserId { get; set; }               // tenant key
     public string Company { get; set; } = "";

@@ -29,14 +29,16 @@ public class FitScorer(AppDbContext db) : IFitScorer
 
         var apps = await db.Applications
             .Where(a => applicationIds.Contains(a.Id))
-            .Select(a => new { a.Id, a.RequirementsEmbedding })
+            .Select(a => new { a.Id, a.RequirementsEmbedding, a.ResumeId })
             .ToListAsync();
 
         var result = new Dictionary<Guid, FitBreakdown>();
+        var byApplication = links.ToLookup(l => l.ApplicationId);
+        var resumes = await db.Resumes.Where(r => r.UserId == userId).ToDictionaryAsync(r => r.Id);
 
         foreach (var app in apps)
         {
-            var required = links.Where(l => l.ApplicationId == app.Id).ToList();
+            var required = byApplication[app.Id].ToList();
             if (required.Count == 0) continue; // no tagged skills -> no score, not a zero score
 
             // Weight by importance: missing a must-have hurts more than
@@ -47,9 +49,10 @@ public class FitScorer(AppDbContext db) : IFitScorer
             var skillMatch = (int)Math.Round(100.0 * matchedWeight / totalWeight);
 
             int? semantic = null;
-            if (profile?.ResumeEmbedding is not null && app.RequirementsEmbedding is not null)
+            var resumeEmbedding = app.ResumeId.HasValue ? resumes.GetValueOrDefault(app.ResumeId.Value)?.Embedding : profile?.ResumeEmbedding;
+            if (resumeEmbedding is not null && app.RequirementsEmbedding is not null)
             {
-                var sim = CosineSimilarity(profile.ResumeEmbedding.ToArray(), app.RequirementsEmbedding.ToArray());
+                var sim = CosineSimilarity(resumeEmbedding.ToArray(), app.RequirementsEmbedding.ToArray());
                 // Cosine over text embeddings rarely drops below ~0.3 even for
                 // unrelated documents, so rescale 0.3-0.9 onto 0-100 instead of
                 // reporting the raw value, which would make everything look great.

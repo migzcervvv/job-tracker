@@ -2,6 +2,7 @@
 
 public enum ApplicationStatus
 {
+    Saved = -1,
     Applied = 0,
     AssessmentPending = 1,
     AssessmentSent = 2,

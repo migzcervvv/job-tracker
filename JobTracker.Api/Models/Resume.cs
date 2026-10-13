@@ -3,6 +3,9 @@ namespace JobTracker.Api.Models;
 
 public class Resume
 {
+    public Guid? ExtractionRunId { get; set; }
+    public string? ProfileJson { get; set; }
+    public Pgvector.Vector? Embedding { get; set; }
     public Guid Id { get; set; }
     public Guid UserId { get; set; }
     public string FileName { get; set; } = "";

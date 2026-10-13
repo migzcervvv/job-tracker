@@ -19,7 +19,7 @@ public class N8nHealthChecker(IConfiguration config, IHttpClientFactory httpFact
             // Named client registered in Program.cs — was already there, just unused until now.
             var client = httpFactory.CreateClient("n8n");
             client.Timeout = TimeSpan.FromSeconds(5);
-            var res = await client.GetAsync($"{n8nBaseUrl.TrimEnd('/')}/health");
+            using var res = await client.GetAsync($"{n8nBaseUrl.TrimEnd('/')}/healthz/readiness");
             return res.IsSuccessStatusCode ? "healthy" : "unreachable";
         }
         catch

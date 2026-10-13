@@ -1,193 +1,90 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using JobTracker.Api.Data;
 using JobTracker.Api.Dtos;
 using JobTracker.Api.Models;
+using JobTracker.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace JobTracker.Api.Controllers;
-
-[ApiController]
-[Route("api")]
-[Authorize]
-public class SkillsController(AppDbContext db) : ControllerBase
+[ApiController, Route("api"), Authorize]
+public class SkillsController(AppDbContext db, ISkillResolver resolver) : ControllerBase
 {
-    private Guid CurrentUserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-
-    // Shared by both "my skills" and "this job's required skills" — same
-    // normalize-and-upsert logic either way, so the Skills table stays
-    // a single deduplicated source instead of drifting into two shapes.
-    private async Task<List<Skill>> ResolveSkillsAsync(List<string> names)
-    {
-        var normalized = names
-            .Select(n => n.Trim().ToLowerInvariant())
-            .Where(n => n.Length > 0)
-            .Distinct()
-            .ToList();
-
-        var existing = await db.Skills.Where(s => normalized.Contains(s.Name)).ToListAsync();
-        var existingNames = existing.Select(s => s.Name).ToHashSet();
-
-        var toCreate = normalized
-            .Where(n => !existingNames.Contains(n))
-            .Select(n => new Skill { Id = Guid.NewGuid(), Name = n })
-            .ToList();
-
-        if (toCreate.Count > 0)
-        {
-            db.Skills.AddRange(toCreate);
-            await db.SaveChangesAsync();
-        }
-
-        return existing.Concat(toCreate).ToList();
-    }
-
+    private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+    private static bool ValidNames(List<string>? names) => names != null && names.Count <= 200 && names.All(n => !string.IsNullOrWhiteSpace(n) && n.Length <= 100);
     [HttpGet("me/skills")]
-    public async Task<IActionResult> GetMySkills()
+    public async Task<IActionResult> MySkills() => Ok(await db.UserSkills.OrderBy(s => s.Skill!.Name).Select(s => new { s.Skill!.Name, level = (int)s.Level, s.EvidenceText, s.EvidenceStrength }).ToListAsync());
+    [HttpPost("me/skills")]
+    public async Task<IActionResult> Add(SetSkillsRequest req)
     {
-        var skills = await db.UserSkills
-            .Where(us => us.UserId == CurrentUserId)
-            .OrderBy(us => us.Skill!.Name)
-            .Select(us => new UserSkillDto(us.Skill!.Name, (int)us.Level))
-            .ToListAsync();
-
-        return Ok(skills);
+        if (!ValidNames(req.SkillNames)) return BadRequest("Invalid skill names.");
+        var skills = await resolver.ResolveSkillsAsync(req.SkillNames);
+        var existing = await db.UserSkills.Select(s => s.SkillId).ToListAsync();
+        foreach (var skill in skills.Where(s => !existing.Contains(s.Id))) db.UserSkills.Add(new UserSkill { UserId = UserId, SkillId = skill.Id });
+        await db.SaveChangesAsync(); return await MySkills();
     }
-
-    // Replaces the full skill-name set. Levels are preserved for names that
-    // survive the replace; anything brand new starts Unrated. This is what
-    // keeps a level from silently resetting to 0 every time a skill is
-    // added or removed through the flat-name endpoint (resume confirm flow
-    // included).
+    [HttpDelete("me/skills/{name}")]
+    public async Task<IActionResult> Remove(string name)
+    {
+        var normalized = SkillResolver.Normalize(name);
+        var link = await db.UserSkills.FirstOrDefaultAsync(s => s.Skill!.Name == normalized);
+        if (link != null) { db.UserSkills.Remove(link); await db.SaveChangesAsync(); }
+        return NoContent();
+    }
     [HttpPut("me/skills")]
-    public async Task<IActionResult> SetMySkills([FromBody] SetSkillsRequest req)
-    {
-        var skills = await ResolveSkillsAsync(req.SkillNames);
-
-        var existingLinks = await db.UserSkills.Where(us => us.UserId == CurrentUserId).ToListAsync();
-        var levelBySkillId = existingLinks.ToDictionary(l => l.SkillId, l => l.Level);
-
-        db.UserSkills.RemoveRange(existingLinks);
-        foreach (var skill in skills)
-        {
-            db.UserSkills.Add(new UserSkill
-            {
-                UserId = CurrentUserId,
-                SkillId = skill.Id,
-                Level = levelBySkillId.TryGetValue(skill.Id, out var lvl) ? lvl : SkillLevel.Unrated,
-            });
-        }
-
-        await db.SaveChangesAsync();
-
-        return Ok(skills
-            .OrderBy(s => s.Name)
-            .Select(s => new UserSkillDto(s.Name, (int)(levelBySkillId.TryGetValue(s.Id, out var lvl2) ? lvl2 : SkillLevel.Unrated))));
-    }
-
-    // Sets proficiency on one already-claimed skill. Separate from
-    // SetMySkills so the level control on the Skills page can save
-    // instantly per-row without resubmitting the whole skill list.
+    public IActionResult LegacyReplace() => StatusCode(410, "Use per-skill POST/DELETE operations to avoid overwriting concurrent changes.");
     [HttpPut("me/skills/level")]
-    public async Task<IActionResult> SetSkillLevel([FromBody] SetSkillLevelRequest req)
+    public async Task<IActionResult> Level(SetSkillLevelRequest req)
     {
-        if (!Enum.IsDefined(typeof(SkillLevel), req.Level))
-            return BadRequest("Unknown skill level.");
-
-        var normalized = req.Name.Trim().ToLowerInvariant();
-        var link = await db.UserSkills
-            .FirstOrDefaultAsync(us => us.UserId == CurrentUserId && us.Skill!.Name == normalized);
-
-        if (link is null) return NotFound();
-
-        link.Level = (SkillLevel)req.Level;
-        await db.SaveChangesAsync();
-
-        return Ok(new UserSkillDto(normalized, req.Level));
+        if (string.IsNullOrWhiteSpace(req.Name) || !Enum.IsDefined(typeof(SkillLevel), req.Level)) return BadRequest("Invalid skill or level.");
+        var name = SkillResolver.Normalize(req.Name);
+        var link = await db.UserSkills.FirstOrDefaultAsync(s => s.Skill!.Name == name);
+        if (link == null) return NotFound();
+        link.Level = (SkillLevel)req.Level; await db.SaveChangesAsync(); return Ok(new UserSkillDto(name, req.Level));
     }
-
-    [HttpPut("applications/{id}/skills")]
-    public async Task<IActionResult> SetApplicationSkills(Guid id, [FromBody] SetSkillsRequest req)
+    [HttpGet("applications/{id:guid}/skills")]
+    public async Task<IActionResult> Required(Guid id)
     {
         var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
-        if (app is null) return NotFound();
-
-        var skills = await ResolveSkillsAsync(req.SkillNames);
-
-        var existingLinks = await db.ApplicationSkills.Where(x => x.ApplicationId == id).ToListAsync();
-        db.ApplicationSkills.RemoveRange(existingLinks);
+        if (app == null) return NotFound();
+        return Ok(new { version = app.Version, skills = await db.ApplicationSkills.Where(s => s.ApplicationId == id).OrderBy(s => s.Skill!.Name).Select(s => new { s.Skill!.Name, importance = Math.Clamp(s.Importance, 1, 3) }).ToListAsync() });
+    }
+    [HttpPut("applications/{id:guid}/skills")]
+    public async Task<IActionResult> SetRequired(Guid id, RequiredSkillsRequest req)
+    {
+        if (req.Skills == null || req.Skills.Count > 200 || req.Skills.Any(s => string.IsNullOrWhiteSpace(s.Name) || s.Name.Length > 100 || s.Importance is < 1 or > 3)) return BadRequest("Invalid skills or importance.");
+        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
+        if (app == null) return NotFound();
+        if (app.Version != req.Version) return Conflict("Requirements changed. Reload before saving.");
+        var desired = req.Skills.GroupBy(s => SkillResolver.Normalize(s.Name)).ToDictionary(g => g.Key, g => g.Max(s => s.Importance));
+        var skills = await resolver.ResolveSkillsAsync(desired.Keys.ToList());
+        var current = await db.ApplicationSkills.Where(s => s.ApplicationId == id).ToListAsync();
+        db.ApplicationSkills.RemoveRange(current.Where(s => !skills.Any(w => w.Id == s.SkillId)));
         foreach (var skill in skills)
-            db.ApplicationSkills.Add(new ApplicationSkill { ApplicationId = id, SkillId = skill.Id });
-
-        await db.SaveChangesAsync();
-        return Ok(skills.Select(s => s.Name));
-    }
-
-    [HttpGet("applications/{id}/skills")]
-    public async Task<IActionResult> GetApplicationSkills(Guid id)
-    {
-        var names = await db.ApplicationSkills
-            .Where(x => x.ApplicationId == id)
-            .Select(x => x.Skill!.Name)
-            .ToListAsync();
-        return Ok(names);
-    }
-
-    [HttpGet("analytics/skills-gap")]
-    public async Task<IActionResult> GetSkillsGap()
-    {
-        var userId = CurrentUserId;
-        var allApps = await db.Applications.Select(a => new { a.Id, a.AppliedDate }).ToListAsync();
-        if (allApps.Count == 0) return Ok(new SkillsGapResponse(new()));
-
-        var sortedByDate = allApps.OrderBy(a => a.AppliedDate).ToList();
-        var midpoint = sortedByDate.Count / 2;
-        var olderIds = sortedByDate.Take(midpoint).Select(a => a.Id).ToHashSet();
-        var recentIds = sortedByDate.Skip(midpoint).Select(a => a.Id).ToHashSet();
-        var recentTotal = Math.Max(recentIds.Count, 1);
-        var olderTotal = Math.Max(olderIds.Count, 1);
-
-        var mySkillIds = await db.UserSkills.Where(us => us.UserId == userId).Select(us => us.SkillId).ToListAsync();
-        var allLinks = await db.ApplicationSkills.ToListAsync();
-
-        var gap = allLinks
-            .GroupBy(x => x.SkillId)
-            .Select(g => new
-            {
-                SkillId = g.Key,
-                Count = g.Count(),
-                RecentCount = g.Count(x => recentIds.Contains(x.ApplicationId)),
-                OlderCount = g.Count(x => olderIds.Contains(x.ApplicationId)),
-            })
-            .OrderByDescending(g => g.Count)
-            .Take(15)
-            .ToList();
-
-        var skillIds = gap.Select(g => g.SkillId).ToList();
-        var skillNames = await db.Skills.Where(s => skillIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name);
-
-        var items = gap.Select(g =>
         {
-            var recentFreq = 100.0 * g.RecentCount / recentTotal;
-            var olderFreq = 100.0 * g.OlderCount / olderTotal;
-
-            // Filtered by THIS skill's id (g.SkillId) — not a global average
-            // over every skill-link that happens to exist.
-            var linksForSkill = allLinks.Where(l => l.SkillId == g.SkillId).ToList();
-            var avgImportance = linksForSkill.Count > 0
-                ? linksForSkill.Average(l => Math.Max(l.Importance, 1))
-                : 2.0;
-
-            return new SkillGapItem(
-                skillNames.GetValueOrDefault(g.SkillId, "unknown"),
-                (int)Math.Round(100.0 * g.Count / allApps.Count),
-                mySkillIds.Contains(g.SkillId),
-                (int)Math.Round(recentFreq - olderFreq),
-                avgImportance
-            );
-        }).ToList();
-
-        return Ok(new SkillsGapResponse(items));
+            var link = current.FirstOrDefault(s => s.SkillId == skill.Id);
+            if (link == null) { link = new ApplicationSkill { ApplicationId = id, SkillId = skill.Id }; db.ApplicationSkills.Add(link); }
+            link.Importance = desired[skill.Name];
+        }
+        app.RequirementsEmbedding = null; app.ExtractionRunId = null; app.UpdatedAt = DateTimeOffset.UtcNow; app.Version = Guid.NewGuid();
+        await db.SaveChangesAsync(); return await Required(id);
     }
+    [HttpGet("analytics/skills-gap")]
+    public async Task<IActionResult> Gap()
+    {
+        var apps = await db.Applications.OrderBy(a => a.AppliedDate).Select(a => a.Id).ToListAsync();
+        var links = await db.ApplicationSkills.Include(s => s.Skill).ToListAsync();
+        var extractedIds = links.Select(s => s.ApplicationId).Distinct().ToHashSet();
+        var ordered = apps.Where(extractedIds.Contains).ToList();
+        var older = ordered.Take(ordered.Count / 2).ToHashSet(); var recent = ordered.Skip(ordered.Count / 2).ToHashSet();
+        var have = (await db.UserSkills.Select(s => s.SkillId).ToListAsync()).ToHashSet();
+        var trendsAvailable = older.Count >= 10 && recent.Count >= 10;
+        var items = links.GroupBy(s => s.SkillId).Select(g => new SkillGapItem(g.First().Skill!.Name,
+            (int)Math.Round(100.0 * g.Count() / Math.Max(extractedIds.Count, 1)), have.Contains(g.Key),
+            trendsAvailable ? (int)Math.Round(100.0 * g.Count(s => recent.Contains(s.ApplicationId)) / recent.Count - 100.0 * g.Count(s => older.Contains(s.ApplicationId)) / older.Count) : 0,
+            g.Average(s => Math.Clamp(s.Importance, 1, 3)))).ToList();
+        return Ok(new { skills = items, trendsAvailable, extractedApplications = extractedIds.Count, totalApplications = apps.Count });
+    }
+    public record RequiredSkillsRequest(Guid Version, List<SkillImportanceDto> Skills);
 }

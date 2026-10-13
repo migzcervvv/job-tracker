@@ -1,4 +1,4 @@
-﻿using JobTracker.Api.Models;
+using JobTracker.Api.Models;
 using JobTracker.Api.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -16,6 +16,8 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
         _currentUserId = currentUser?.UserId;
     }
 
+    public DbSet<AutomationRun> AutomationRuns => Set<AutomationRun>();
+    public DbSet<StorageDeletion> StorageDeletions => Set<StorageDeletion>();
     public DbSet<Application> Applications => Set<Application>();
     public DbSet<StageDetail> StageDetails => Set<StageDetail>();
     public DbSet<TimelineEvent> TimelineEvents => Set<TimelineEvent>();
@@ -30,8 +32,17 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
     {
         base.OnModelCreating(builder);
 
+        builder.Entity<Resume>().HasQueryFilter(r => _currentUserId != null && r.UserId == _currentUserId);
+        builder.Entity<UserProfile>().HasQueryFilter(r => _currentUserId != null && r.UserId == _currentUserId);
+        builder.Entity<AutomationRun>().HasQueryFilter(r => _currentUserId != null && r.UserId == _currentUserId);
+        builder.Entity<Application>().HasIndex(a => new { a.UserId, a.AppliedDate });
+        builder.Entity<Application>().HasIndex(a => new { a.UserId, a.Status });
+        builder.Entity<Resume>().HasIndex(r => new { r.UserId, r.CreatedAt });
+        builder.Entity<AutomationRun>().HasIndex(r => new { r.Status, r.NextAttemptAt });
+        builder.Entity<AutomationRun>().HasIndex(r => new { r.ApplicationId, r.Type, r.CreatedAt });
+
         builder.Entity<Application>()
-            .HasQueryFilter(a => _currentUserId == null || a.UserId == _currentUserId);
+            .HasQueryFilter(a => _currentUserId != null && a.UserId == _currentUserId);
 
         builder.Entity<Application>()
             .HasMany(a => a.StageDetails)
@@ -44,19 +55,19 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
             .HasForeignKey(t => t.ApplicationId);
 
         builder.Entity<TimelineEvent>()
-            .HasQueryFilter(t => _currentUserId == null || t.Application!.UserId == _currentUserId);
+            .HasQueryFilter(t => _currentUserId != null && t.Application!.UserId == _currentUserId);
 
         builder.Entity<StageDetail>()
-            .HasQueryFilter(s => _currentUserId == null || s.Application!.UserId == _currentUserId);
+            .HasQueryFilter(s => _currentUserId != null && s.Application!.UserId == _currentUserId);
 
         builder.Entity<ApplicationSkill>().HasKey(x => new { x.ApplicationId, x.SkillId });
         builder.Entity<UserSkill>().HasKey(x => new { x.UserId, x.SkillId });
         builder.Entity<Skill>().HasIndex(s => s.Name).IsUnique();
 
         builder.Entity<ApplicationSkill>()
-            .HasQueryFilter(x => _currentUserId == null || x.Application!.UserId == _currentUserId);
+            .HasQueryFilter(x => _currentUserId != null && x.Application!.UserId == _currentUserId);
         builder.Entity<UserSkill>()
-            .HasQueryFilter(x => _currentUserId == null || x.UserId == _currentUserId);
+            .HasQueryFilter(x => _currentUserId != null && x.UserId == _currentUserId);
         builder.Entity<Application>()
             .HasMany<ApplicationSkill>()
             .WithOne(x => x.Application!)
@@ -71,6 +82,7 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
         if (Database.IsNpgsql())
         {
             builder.HasPostgresExtension("vector");
+            builder.Entity<Resume>().Property(r => r.Embedding).HasColumnType("vector(1536)");
 
             builder.Entity<UserProfile>(e =>
             {
@@ -84,6 +96,7 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
         }
         else
         {
+            builder.Entity<Resume>().Ignore(r => r.Embedding);
             // InMemory (test-role sandbox): Pgvector.Vector has no InMemory
             // mapping. UseVector() is what teaches EF how to store/read that
             // type, and it's only ever called on the Npgsql branch in
