@@ -13,7 +13,9 @@ export function KanbanColumn({ meta, applications, onOpenApplication }) {
         <span className="n">{applications.length}</span>
       </div>
       <div className="kanban-col-body">
-        {applications.length === 0 && <div className="kanban-empty">Empty</div>}
+        {applications.length === 0 && (
+          <div className="kanban-empty">No applications in this stage</div>
+        )}
         <AnimatePresence initial={false}>
           {applications.map((a) => (
             <motion.div

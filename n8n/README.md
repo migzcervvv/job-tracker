@@ -5,7 +5,7 @@ These six inactive exports are sanitized workflow templates. Static contract tes
 ## Setup
 
 1. Import each `*.workflow.json` into an isolated n8n instance.
-2. Replace every `https://YOUR_API_HOST` with the API base URL. All callbacks must reach the same database as the dispatcher.
+2. Replace every `https://jtrackerch.runasp.net` with the API base URL. All callbacks must reach the same database as the dispatcher.
 3. Create an HTTP Header Auth credential named `Job Tracker automation key`: name `X-Automation-Key`, value matching server-only `Automation:ApiKey`. Assign it to webhook authentication and internal API requests. Replace placeholder credential IDs by selecting the real credential.
 4. Configure the completion-provider URL, model, and header credential. The completion nodes use the OpenAI-compatible chat-completions wire format; verify that the selected provider returns `choices[0].message.content` containing the requested JSON. Provider credentials stay in n8n's encrypted credential store.
 5. For resume processing, run the private `parser` service, configure `PARSER_API_KEY` and the exact `RESUME_DOWNLOAD_HOST`, set the parser-node URL, and select an `X-Parser-Key` Header Auth credential. The parser accepts only signed HTTPS URLs for that host's private `resumes` bucket.
@@ -18,11 +18,11 @@ Use your existing n8n instance. Configure the API with its base URL and the thre
 
 Every dispatch includes `schemaVersion: 1` and a UUID `runId`:
 
-| Workflow | Additional dispatch fields | Success callback |
-| --- | --- | --- |
-| Skills | applicationId, rawDescription | PUT /api/internal/applications/{id}/skills |
+| Workflow  | Additional dispatch fields                                                  | Success callback                                        |
+| --------- | --------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Skills    | applicationId, rawDescription                                               | PUT /api/internal/applications/{id}/skills              |
 | Questions | applicationId, stageDetailId, jobTitle, company, jobDescription, resumeText | PUT /api/internal/applications/{id}/interview-questions |
-| Resumes | resumeId, downloadUrl | PUT /api/internal/resumes/{id}/extraction |
+| Resumes   | resumeId, downloadUrl                                                       | PUT /api/internal/resumes/{id}/extraction               |
 
 Skills callback: `{runId, skills: [{name, importance}], requirementsEmbedding?}`.
 Questions callback: `{runId, stageDetailId, questions}`.

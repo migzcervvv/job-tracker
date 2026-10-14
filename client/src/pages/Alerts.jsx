@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { Layout } from "../components/Layout.jsx";
 import { getPipelineAlerts } from "../api/analytics.js";
 import { extractErrorMessage } from "../api/errors.js";
-import { notify } from "../notify.js";
 
 function AlertList({ title, hint, items, emptyText, unit }) {
   return (
@@ -50,24 +49,28 @@ export function Alerts() {
   const [data, setData] = useState(null);
   const [staleDays, setStaleDays] = useState(7);
   const [noReplyDays, setNoReplyDays] = useState(60);
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     getPipelineAlerts({ staleDays, noReplyDays })
       .then((d) => {
-        if (!cancelled) setData(d);
+        if (!cancelled) {
+          setData(d);
+          setError("");
+        }
       })
       .catch((err) => {
-        if (!cancelled)
-          notify.error("Could not load alerts", extractErrorMessage(err));
+        if (!cancelled) setError(extractErrorMessage(err));
       });
     return () => {
       cancelled = true;
     };
-  }, [staleDays, noReplyDays]);
+  }, [staleDays, noReplyDays, attempt]);
 
   return (
-    <Layout title="Alerts">
+    <Layout title="Next actions">
       <p
         style={{
           color: "var(--text-dim)",
@@ -77,19 +80,31 @@ export function Alerts() {
           maxWidth: 640,
         }}
       >
-        Where your pipeline is going quiet. Terminal applications (rejected,
-        withdrawn, archived, decided) are excluded — this only surfaces things
-        still theoretically alive.
+        Focus on the applications that need your attention. Completed and
+        saved-for-later roles are left out of these reminders.
       </p>
 
-      {data === null && <p style={{ color: "var(--text-dim)" }}>Loading…</p>}
+      {error && (
+        <div className="notice-error" role="alert">
+          {error}{" "}
+          <button
+            className="icon-btn"
+            onClick={() => setAttempt((value) => value + 1)}
+          >
+            Try again
+          </button>
+        </div>
+      )}
+      {data === null && !error && (
+        <p role="status">Loading your next actions…</p>
+      )}
 
       {data !== null && (
         <>
           <div className="stat-strip">
             <div className="stat-card">
               <div className="stat-value">{data.appliedThisWeek}</div>
-              <div className="stat-label">applied this week</div>
+              <div className="stat-label">Applications sent this week</div>
             </div>
             <div className="stat-card">
               <div
@@ -100,7 +115,9 @@ export function Alerts() {
               >
                 {data.stale.length}
               </div>
-              <div className="stat-label">no activity in {staleDays}d</div>
+              <div className="stat-label">
+                {staleDays}+ days without an update
+              </div>
             </div>
             <div className="stat-card">
               <div
@@ -111,13 +128,15 @@ export function Alerts() {
               >
                 {data.noReply.length}
               </div>
-              <div className="stat-label">no reply in {noReplyDays}d</div>
+              <div className="stat-label">
+                {noReplyDays}+ days waiting for a reply
+              </div>
             </div>
           </div>
 
           <div className="threshold-row">
             <label>
-              Stale after
+              Remind me after no activity for
               <select
                 value={staleDays}
                 onChange={(e) => setStaleDays(Number(e.target.value))}
@@ -157,18 +176,18 @@ export function Alerts() {
               unit=""
             />
             <AlertList
-              title="Going quiet"
-              hint="Active applications without recent user activity. Automation is excluded."
+              title="Time to check in"
+              hint="Applications you haven’t updated recently."
               items={data.stale}
-              emptyText="Nothing stale. Every active application has moved recently."
-              unit="d"
+              emptyText="You’re up to date. No applications need a check-in."
+              unit=" days"
             />
             <AlertList
-              title="Never heard back"
-              hint="No employer response has been recorded. Notes and generated questions do not count as replies."
+              title="Waiting for a reply"
+              hint="Applications with no employer response recorded. Mark a reply in the application’s next-step section."
               items={data.noReply}
-              emptyText="No silent applications past the threshold."
-              unit="d"
+              emptyText="No applications have been waiting this long."
+              unit=" days"
             />
           </div>
         </>

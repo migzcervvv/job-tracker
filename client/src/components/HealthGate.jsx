@@ -24,8 +24,8 @@ export function HealthGate({ children }) {
     <>
       {degraded && (
         <div className="automation-banner" role="status">
-          Automation is unavailable. Tracking and editing remain available;
-          queued runs will retry.
+          Automatic processing is temporarily unavailable. You can still view
+          and edit your applications.
         </div>
       )}
       {children}

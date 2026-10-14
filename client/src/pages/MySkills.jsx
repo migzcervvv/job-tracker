@@ -8,22 +8,25 @@ import {
   setSkillLevel,
 } from "../api/skills.js";
 import { extractErrorMessage } from "../api/errors.js";
-import { notify } from "../notify.js";
 import { useApplications } from "../state/ApplicationsContext.jsx";
 
 export function MySkills() {
   const { refresh: refreshApplications } = useApplications();
   const [skills, setSkills] = useState(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     getMySkills()
       .then((data) => {
-        if (!cancelled) setSkills(data);
+        if (!cancelled) {
+          setSkills(data);
+          setError("");
+        }
       })
-      .catch((err) =>
-        notify.error("Could not load skills", extractErrorMessage(err)),
-      );
+      .catch((err) => {
+        if (!cancelled) setError(extractErrorMessage(err));
+      });
     return () => {
       cancelled = true;
     };
@@ -38,12 +41,8 @@ export function MySkills() {
     };
   }, [skills]);
 
-  // These three handlers hit the API directly and return the server's
-  // response — SkillLevelEditor updates its own row state from whatever
-  // comes back, so there's no separate refetch after every keystroke.
-  // Every one of them can shift the fit score on every application, so each
-  // also refreshes the board in the background — otherwise it's stale until
-  // the board happens to reload on its own.
+  // Adding or removing skills refreshes match scores. Proficiency ratings
+  // save independently and do not change the match calculation.
   function refreshFitScores() {
     refreshApplications().catch(() => {});
   }
@@ -77,9 +76,10 @@ export function MySkills() {
   return (
     <Layout title="My skills">
       <p className="skills-page-hint">
-        Claimed skills feed Skills Gap and weighted fit. Proficiency ratings are
-        personal notes; they do not change either calculation. Resume skills are
-        added only after confirmation. Evidence remains attached to each skill.
+        Add the skills you bring to a role, or review suggestions from a resume.
+        These skills help you compare opportunities. Your proficiency ratings
+        are personal notes and do not change match scores. Changes save
+        automatically.
       </p>
 
       {skills !== null && skills.length > 0 && (
@@ -100,7 +100,11 @@ export function MySkills() {
       )}
 
       <div className="panel">
-        {skills === null ? (
+        {error ? (
+          <p className="notice-error" role="alert">
+            {error}
+          </p>
+        ) : skills === null ? (
           <p style={{ color: "var(--text-dim)", margin: 0 }}>Loading…</p>
         ) : (
           <SkillLevelEditor

@@ -40,6 +40,7 @@ export function NewApplication() {
         }}
         resumes={resumes}
         onSubmit={save}
+        onCancel={() => navigate("/")}
       />
     </Layout>
   );

@@ -6,7 +6,7 @@ import { notify } from "../../notify.js";
 
 const STATUS_COLOR = {
   healthy: "var(--s-interview)",
-  unreachable: "#e07a6f",
+  unreachable: "#9d4038",
   not_configured: "var(--text-dim)",
 };
 
@@ -36,7 +36,11 @@ function HealthCard({ label, status, detail }) {
         <span className="health-card-label">{label}</span>
       </div>
       <div className="health-card-status" style={{ color }}>
-        {status.replace("_", " ")}
+        {{
+          healthy: "Working normally",
+          unreachable: "Unavailable",
+          not_configured: "Not set up",
+        }[status] ?? "Checking status"}
       </div>
       {detail && <div className="health-card-detail">{detail}</div>}
     </div>
@@ -58,7 +62,7 @@ export function AdminHealth() {
 
   return (
     <Layout
-      title="System health"
+      title="System status"
       actions={
         <button className="icon-btn" onClick={refresh}>
           Refresh
@@ -70,16 +74,20 @@ export function AdminHealth() {
       {health !== null && (
         <div className="health-grid">
           <HealthCard
-            label="API"
+            label="Application server"
             status={health.api}
             detail={`Uptime: ${formatUptime(health.uptimeSeconds)}`}
           />
           <HealthCard
             label="Database"
             status={health.database}
-            detail="Supabase (session pooler)"
+            detail="Stores your application information"
           />
-          <HealthCard label="n8n" status={health.n8n} detail="GCP" />
+          <HealthCard
+            label="Automatic processing"
+            status={health.n8n}
+            detail="Skill suggestions, interview preparation and reminders"
+          />
         </div>
       )}
     </Layout>

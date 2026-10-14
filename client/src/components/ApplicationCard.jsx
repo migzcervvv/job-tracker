@@ -31,6 +31,13 @@ export function ApplicationCard({ application, onOpen }) {
       {...attributes}
       className={`app-card${isDragging ? " is-dragging" : ""}`}
       onClick={() => onOpen(application)}
+      aria-label={`Open ${application.title} at ${application.company || "company not added"}`}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(application);
+        }
+      }}
     >
       <div className="row-top">
         <span className="title">{application.title}</span>
@@ -43,9 +50,9 @@ export function ApplicationCard({ application, onOpen }) {
         {typeof fit === "number" && (
           <span
             className={`fit-badge ${fitTone(fit)}`}
-            title="Weighted skill match, with a 30% semantic signal when available"
+            title="How closely your skills match this role. This is not a hiring prediction."
           >
-            {fit}%
+            {fit}% match
           </span>
         )}
       </div>

@@ -7,10 +7,7 @@
       "name": "Schedule",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        0,
-        200
-      ],
+      "position": [0, 200],
       "parameters": {
         "rule": {
           "interval": [
@@ -27,12 +24,9 @@
       "name": "Fetch notifications",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        220,
-        200
-      ],
+      "position": [220, 200],
       "parameters": {
-        "url": "https://YOUR_API_HOST/api/internal/reminders/deadlines",
+        "url": "https://jtrackerch.runasp.net/api/internal/reminders/deadlines",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
@@ -51,10 +45,7 @@
       "name": "Prepare notifications",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        440,
-        200
-      ],
+      "position": [440, 200],
       "parameters": {
         "jsCode": "return $input.all().flatMap((item,index) => (Array.isArray(item.json)?item.json:[item.json]).flatMap(group => (group.applications??[]).map(app => ({json:{userId:group.userId,email:group.email,deliveryKey:app.deliveryKey,subject:'Application reminder: '+app.title,text:app.title+' at '+app.company+'\\n'+(app.nextAction??'')+'\\n'+JSON.stringify(app.deadlines??[])+'\\nhttps://YOUR_FRONTEND_HOST/applications/'+app.id},pairedItem:{item:index}}))));"
       }
@@ -64,13 +55,10 @@
       "name": "Claim delivery",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        660,
-        200
-      ],
+      "position": [660, 200],
       "parameters": {
         "method": "POST",
-        "url": "https://YOUR_API_HOST/api/internal/notifications/claim",
+        "url": "https://jtrackerch.runasp.net/api/internal/notifications/claim",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -93,10 +81,7 @@
       "name": "Delivery allowed",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        880,
-        200
-      ],
+      "position": [880, 200],
       "parameters": {
         "conditions": {
           "options": {
@@ -122,10 +107,7 @@
       "name": "Send email",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1100,
-        200
-      ],
+      "position": [1100, 200],
       "parameters": {
         "method": "POST",
         "url": "https://api.resend.com/emails",
@@ -160,10 +142,7 @@
       "name": "Email accepted",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        1320,
-        200
-      ],
+      "position": [1320, 200],
       "parameters": {
         "conditions": {
           "options": {
@@ -189,13 +168,10 @@
       "name": "Complete delivery",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1540,
-        200
-      ],
+      "position": [1540, 200],
       "parameters": {
         "method": "POST",
-        "url": "https://YOUR_API_HOST/api/internal/notifications/complete",
+        "url": "https://jtrackerch.runasp.net/api/internal/notifications/complete",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -219,10 +195,7 @@
       "name": "Done",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [
-        1760,
-        200
-      ],
+      "position": [1760, 200],
       "parameters": {}
     }
   ],

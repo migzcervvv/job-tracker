@@ -1,5 +1,11 @@
-import { Suspense, lazy } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { Suspense, lazy, useEffect } from "react";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import { GooeyToaster } from "goey-toast";
 import { AuthProvider } from "./auth/AuthContext.jsx";
 import { HealthGate } from "./components/HealthGate.jsx";
@@ -60,13 +66,27 @@ const AdminAutomationLog = lazy(() =>
 );
 
 function RouteFallback() {
-  return <div style={{ padding: 28, color: "var(--text-dim)" }}>Loading…</div>;
+  return (
+    <div className="empty-state" role="status">
+      <span className="loading-spinner" />
+      Opening your page…
+    </div>
+  );
+}
+
+function RouteScroll() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
 }
 
 export default function App() {
   return (
     <BrowserRouter>
-      <GooeyToaster position="top-center" theme="dark" />
+      <RouteScroll />
+      <GooeyToaster position="bottom-right" theme="light" />
       <HealthGate>
         <AuthProvider>
           <Suspense fallback={<RouteFallback />}>

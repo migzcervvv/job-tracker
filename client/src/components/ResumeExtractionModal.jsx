@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getResumeAutomationStatus,
   getProposedSkills,
@@ -7,6 +7,7 @@ import {
 } from "../api/resumes.js";
 import { pollRun } from "../api/polling.js";
 import { extractErrorMessage } from "../api/errors.js";
+import { progressLabel, progressMessage } from "../api/progress.js";
 export function ResumeExtractionModal({ resume, onClose, onSkillsConfirmed }) {
   return resume ? (
     <Review
@@ -18,6 +19,10 @@ export function ResumeExtractionModal({ resume, onClose, onSkillsConfirmed }) {
   ) : null;
 }
 function Review({ resume, onClose, onSkillsConfirmed }) {
+  const heading = useRef(null);
+  useEffect(() => {
+    heading.current?.focus();
+  }, []);
   const [status, setStatus] = useState("pending");
   const [proposed, setProposed] = useState([]);
   const [selected, setSelected] = useState(() => new Set());
@@ -31,7 +36,7 @@ function Review({ resume, onClose, onSkillsConfirmed }) {
         getResumeAutomationStatus(resume.id, resume.runId, signal),
       onStatus: (state) => {
         setStatus(state.status ?? "pending");
-        setMessage(state.message ?? "");
+        setMessage("");
         if (state.status === "succeeded")
           void getProposedSkills(resume.id)
             .then((data) => {
@@ -52,7 +57,12 @@ function Review({ resume, onClose, onSkillsConfirmed }) {
       },
       onError: (err) => {
         setStatus("unknown");
-        setMessage(err.message);
+        setMessage(
+          extractErrorMessage(
+            err,
+            "We can’t check progress right now. Close this review and try again in a moment.",
+          ),
+        );
       },
     });
     return () => {
@@ -76,14 +86,24 @@ function Review({ resume, onClose, onSkillsConfirmed }) {
     }
   }
   return (
-    <section className="panel" aria-label="Resume extraction review">
-      <h3>
-        {resume.fileName}: {status}
+    <section
+      className="panel review-panel"
+      aria-label="Resume extraction review"
+    >
+      <h3 ref={heading} tabIndex={-1}>
+        Review skills from {resume.fileName}
       </h3>
-      <p role="status">{message}</p>
+      <span className="status-pill">{progressLabel(status)}</span>
+      <p
+        className={message ? "notice-error" : "notice-info"}
+        role={message ? "alert" : "status"}
+        style={{ marginTop: 16 }}
+      >
+        {message || progressMessage({ status }, "resume")}
+      </p>
       <p>
-        The file remains saved while processing. Skills require confirmation;
-        active resume selection is separate.
+        Choose the skills you want to add to My skills. Your resume stays saved,
+        and you can close this review at any time.
       </p>
       <ul className="proposal-list">
         {proposed.map((skill) => (
@@ -102,7 +122,7 @@ function Review({ resume, onClose, onSkillsConfirmed }) {
                 }
               />
               {skill.name}
-              {skill.alreadyClaimed ? " (already claimed)" : ""}
+              {skill.alreadyClaimed ? " (already in My skills)" : ""}
             </label>
             <p>{skill.evidence}</p>
           </li>
@@ -119,14 +139,16 @@ function Review({ resume, onClose, onSkillsConfirmed }) {
               disabled={busy}
               onClick={() => void save(true)}
             >
-              Dismiss proposals
+              Skip suggestions
             </button>
             <button
               className="btn-save"
               disabled={busy || !selected.size}
               onClick={() => void save(false)}
             >
-              Confirm {selected.size} skills
+              {busy
+                ? "Saving skills…"
+                : `Add ${selected.size} ${selected.size === 1 ? "skill" : "skills"}`}
             </button>
           </>
         )}

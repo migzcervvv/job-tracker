@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Layout } from "../components/Layout.jsx";
 import { getSkillsGap } from "../api/skills.js";
 import { extractErrorMessage } from "../api/errors.js";
-import { notify } from "../notify.js";
 
 // Importance is 1-3 from the JD extraction (nice-to-have → required).
 // Weighting by it means "required everywhere" outranks "mentioned often
@@ -72,6 +71,7 @@ function RankedList({ title, hint, items, tone, mode }) {
 export function SkillsGap() {
   const [skills, setSkills] = useState(null);
   const [coverage, setCoverage] = useState(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     getSkillsGap()
@@ -79,9 +79,7 @@ export function SkillsGap() {
         setSkills(data.skills);
         setCoverage(data);
       })
-      .catch((err) =>
-        notify.error("Could not load skills gap", extractErrorMessage(err)),
-      );
+      .catch((err) => setError(extractErrorMessage(err)));
   }, []);
 
   const { gaps, strengths, rising, fading } = useMemo(() => {
@@ -110,12 +108,12 @@ export function SkillsGap() {
   }, [skills]);
 
   return (
-    <Layout title="Skills gap">
+    <Layout title="Skills insights">
       {coverage && (
         <p>
           {coverage.extractedApplications}/{coverage.totalApplications}{" "}
-          applications have recorded skills. Trends require at least 10
-          applications in each comparison window.
+          applications have job skills recorded. Add descriptions to more
+          applications for a fuller picture.
         </p>
       )}
       <p
@@ -127,19 +125,26 @@ export function SkillsGap() {
           maxWidth: 640,
         }}
       >
-        Required skills across your applications, weighted by how hard a
-        requirement each one was, compared against your own claimed skills.
-        Trend compares recent applications against older ones — with only a
-        handful logged, read it as a rough signal.
+        See the skills employers ask for most often, where you already match,
+        and what you could learn next. Required skills carry more weight than
+        optional ones.
       </p>
 
-      {skills === null && <p style={{ color: "var(--text-dim)" }}>Loading…</p>}
+      {error && (
+        <p className="notice-error" role="alert">
+          {error}
+        </p>
+      )}
+      {skills === null && !error && (
+        <p role="status">Comparing skills across your applications…</p>
+      )}
 
       {skills !== null && skills.length === 0 && (
         <div className="panel">
           <p style={{ margin: 0, color: "var(--text-dim)" }}>
-            No data yet — tag required skills on an application, or add your own
-            skills under Skills &amp; resume, to start building this out.
+            No skill comparisons yet. Add job skills to an application and add
+            your experience in My skills to see your matches and learning
+            opportunities.
           </p>
         </div>
       )}
@@ -148,7 +153,7 @@ export function SkillsGap() {
         <div className="skill-grid">
           <RankedList
             title="Biggest gaps"
-            hint="Weighted by requirement strength — the highest-leverage things to pick up next."
+            hint="Skills you haven’t added yet, ranked by how often employers require them."
             items={gaps}
             tone="var(--accent)"
           />
@@ -170,7 +175,7 @@ export function SkillsGap() {
           {coverage?.trendsAvailable && (
             <RankedList
               title="Fading"
-              hint="Showing up less than it used to. Could mean less relevant — or so standard it stopped being listed."
+              hint="These skills appear less often in your newer job postings."
               items={fading}
               tone="var(--s-closed)"
               mode="trend"

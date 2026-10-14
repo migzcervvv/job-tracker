@@ -45,7 +45,7 @@ export function ApplicationsProvider({ children }) {
   useEffect(() => {
     mounted.current = true;
     void refresh().catch((err) =>
-      notify.error("Could not load the board", extractErrorMessage(err)),
+      notify.error("Couldn’t load your applications", extractErrorMessage(err)),
     );
     const activePolls = polls.current;
     // Lifecycle counters intentionally change during cleanup; these refs are not DOM nodes.

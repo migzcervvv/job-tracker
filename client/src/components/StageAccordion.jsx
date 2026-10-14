@@ -212,6 +212,7 @@ export function StageAccordion({
       <button
         type="button"
         className="stage-accordion-head"
+        aria-expanded={expanded}
         onClick={() => setExpanded((e) => !e)}
       >
         <span

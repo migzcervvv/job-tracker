@@ -29,6 +29,9 @@ import { toInstant, toLocalInput } from "../api/datetime.js";
 import { useApplications } from "../state/ApplicationsContext.jsx";
 import { extractErrorMessage } from "../api/errors.js";
 import { notify } from "../notify.js";
+import { Icon } from "../components/Icon.jsx";
+import { progressMessage } from "../api/progress.js";
+import { eventLabel } from "../api/timelineMeta.js";
 export function ApplicationDetail() {
   const { id } = useParams();
   return <Detail key={id} id={id} />;
@@ -71,7 +74,8 @@ function FollowUpForm({ app, onSaved }) {
   }
   return (
     <form className="panel" onSubmit={submit}>
-      <h3>Next action and contact</h3>
+      <h3>Your next step</h3>
+      <p>Keep the next action and the person to contact together.</p>
       {[
         "nextAction",
         "followUpAt",
@@ -83,9 +87,9 @@ function FollowUpForm({ app, onSaved }) {
           <label htmlFor={key}>
             {
               {
-                nextAction: "Next action",
-                followUpAt: "Follow-up (local time)",
-                snoozedUntil: "Snooze until (local time)",
+                nextAction: "What needs to happen next?",
+                followUpAt: "Follow-up date",
+                snoozedUntil: "Pause reminders until",
                 contactName: "Recruiter / contact",
                 contactEmail: "Contact email",
               }[key]
@@ -119,7 +123,7 @@ function FollowUpForm({ app, onSaved }) {
             }))
           }
         />{" "}
-        Employer response received
+        I’ve heard back from the employer
       </label>
       <p>
         <button className="btn-save" disabled={busy}>
@@ -285,64 +289,79 @@ function Detail({ id }) {
       ? questionStatus.stageDetailId
       : null;
   return (
-    <Layout title={app.title} actions={<Link to="/">Board</Link>}>
-      <div className="panel">
-        <h2>{app.company}</h2>
-        <p>
-          {statusMeta(app.status).label} ·{" "}
-          {new Date(app.appliedDate).toLocaleDateString()}
-        </p>
-        <div className="stage-form-actions">
-          <select
-            aria-label="Application status"
-            value={app.status}
-            disabled={busy}
-            onChange={(e) => {
-              const value = Number(e.target.value);
-              void mutate(async () =>
-                accept(await updateApplicationStatus(id, value, app.version)),
-              );
-            }}
-          >
-            {STATUS_META.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+    <Layout
+      title={app.title}
+      description={app.company || "Your application details"}
+      actions={
+        <Link className="icon-btn" to="/">
+          <Icon name="back" size={16} />
+          All applications
+        </Link>
+      }
+    >
+      <section className="panel">
+        <div className="detail-summary">
+          <div>
+            <span className="eyebrow">CURRENT STAGE</span>
+            <p style={{ margin: "7px 0 0" }}>
+              {statusMeta(app.status).label} ·{" "}
+              {app.status === -1 ? "Saved" : "Applied"}{" "}
+              {new Date(app.appliedDate).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </p>
+          </div>
           <button
             className="icon-btn"
-            onClick={() => setEditing(true)}
+            onClick={() => setEditing((value) => !value)}
             disabled={busy}
           >
-            Edit application
-          </button>
-          <button
-            className="icon-btn"
-            disabled={busy}
-            onClick={() =>
-              void mutate(async () => {
-                await deleteApplication(id);
-                removeApplication(id);
-                navigate("/");
-              })
-            }
-          >
-            Delete
+            {editing ? "Close editor" : "Edit application"}
           </button>
         </div>
-        {app.jobUrl && (
-          <p>
-            <a href={app.jobUrl} target="_blank" rel="noreferrer">
-              Open posting
+        <div className="stage-form-actions">
+          <label className="toolbar-select">
+            Move to
+            <select
+              aria-label="Application status"
+              value={app.status}
+              disabled={busy}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                void mutate(async () =>
+                  accept(await updateApplicationStatus(id, value, app.version)),
+                );
+              }}
+            >
+              {STATUS_META.map((stage) => (
+                <option value={stage.value} key={stage.value}>
+                  {stage.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {app.jobUrl && (
+            <a
+              className="text-btn"
+              href={app.jobUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              View original posting
+              <Icon name="arrow" size={15} />
             </a>
+          )}
+        </div>
+        <details style={{ marginTop: 20 }}>
+          <summary>Read the job description</summary>
+          <p style={{ whiteSpace: "pre-wrap", maxWidth: 850 }}>
+            {app.rawDescription ||
+              "No job description added yet. Use Edit application to add the posting."}
           </p>
-        )}
-        <details>
-          <summary>Job description</summary>
-          <p style={{ whiteSpace: "pre-wrap" }}>{app.rawDescription}</p>
         </details>
-      </div>
+      </section>
       {editing && (
         <ApplicationForm
           initial={app}
@@ -353,160 +372,267 @@ function Detail({ id }) {
             dirty.current = false;
             await reload();
             setEditing(false);
+            notify.success("Application updated");
           }}
         />
       )}
-      <div className="panel">
-        <h3>Fit and requirements</h3>
+      <div className="detail-columns">
+        <div className="detail-main">
+          <section className="panel">
+            <h3>Application progress</h3>
+            <p>Keep interview rounds, assessments and offers in one place.</p>
+            {entries.length === 0 && (
+              <p className="stage-entry-empty">
+                There are no stage details to add yet. Update the stage above as
+                your application moves forward.
+              </p>
+            )}
+            {entries.map((entry) => (
+              <StageAccordion
+                key={
+                  entry.record
+                    ? entry.record.id
+                    : "new:" + entry.stage + ":" + stages.length
+                }
+                entry={entry}
+                applicationId={id}
+                onSaved={() =>
+                  void reload().catch((err) =>
+                    notify.error(
+                      "Couldn’t refresh the details",
+                      extractErrorMessage(err),
+                    ),
+                  )
+                }
+                onGenerateQuestions={generate}
+                generatingRound={generating}
+              />
+            ))}
+            {questionStatus && (
+              <p className="notice-info" role="status">
+                {progressMessage(questionStatus, "questions")}
+              </p>
+            )}
+          </section>
+          <section className="panel">
+            <h3>Notes & activity</h3>
+            <p>Save a conversation, a useful detail or a thought for later.</p>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void mutate(async () => {
+                  accept(await addNote(id, note));
+                  setNote("");
+                  notify.success("Note saved");
+                });
+              }}
+            >
+              <div className="field">
+                <label htmlFor="interaction-note">Add a note</label>
+                <textarea
+                  id="interaction-note"
+                  rows={3}
+                  maxLength={10000}
+                  required
+                  placeholder="What would you like to remember?"
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                />
+              </div>
+              <button className="btn-save" disabled={busy || !note.trim()}>
+                Save note
+              </button>
+            </form>
+            <ul className="timeline-list">
+              {app.timeline.map((item) => (
+                <li className="timeline-item" key={item.id}>
+                  <time>
+                    {new Date(item.createdAt).toLocaleString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </time>
+                  <span className="timeline-label">
+                    {eventLabel(item.type)}
+                  </span>
+                  {item.type === "note" && (
+                    <p style={{ whiteSpace: "pre-wrap" }}>{item.body}</p>
+                  )}
+                  {item.type === "status_changed" && (
+                    <p>
+                      {(item.body ?? "")
+                        .split(" → ")
+                        .map((part) =>
+                          STATUS[part] === undefined
+                            ? part
+                            : statusMeta(STATUS[part]).label,
+                        )
+                        .join(" → ")}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
+        <aside className="detail-aside" aria-label="Skills and follow-up">
+          <section className="panel">
+            <h3>Your skill match</h3>
+            {app.fit ? (
+              <div className="fit-summary">
+                <span className="fit-score">{app.fit.overall}%</span>
+                <div className="fit-copy">
+                  <strong>
+                    {app.fit.requiredCovered} of {app.fit.requiredTotal} skills
+                    matched
+                  </strong>
+                  <br />A guide to your match, not a hiring prediction.
+                </div>
+              </div>
+            ) : (
+              <p>
+                Once job skills are added, you’ll see how they compare with your
+                own.
+              </p>
+            )}
+            <div className="skill-summary">
+              <div>
+                <strong>In your skill set</strong>
+                <div className="skill-chips">
+                  {(required?.skills ?? [])
+                    .filter((skill) => mine.has(skill.name))
+                    .map((skill) => (
+                      <span key={skill.name}>{skill.name}</span>
+                    ))}
+                  {!(required?.skills ?? []).some((skill) =>
+                    mine.has(skill.name),
+                  ) && <span>No matches yet</span>}
+                </div>
+              </div>
+              <div>
+                <strong>Room to grow</strong>
+                <div className="skill-chips missing">
+                  {(required?.skills ?? [])
+                    .filter((skill) => !mine.has(skill.name))
+                    .map((skill) => (
+                      <span key={skill.name}>{skill.name}</span>
+                    ))}
+                  {!(required?.skills ?? []).some(
+                    (skill) => !mine.has(skill.name),
+                  ) && <span>No missing skills recorded</span>}
+                </div>
+              </div>
+            </div>
+            {status && (
+              <p className="notice-info" role="status">
+                {progressMessage(status)}
+              </p>
+            )}
+            <details>
+              <summary>Review and edit job skills</summary>
+              <p>
+                Mark each skill as required, preferred or nice to have. Save
+                when you’re finished.
+              </p>
+              {required && (
+                <TagEditor
+                  skills={draft}
+                  onChange={(values) => {
+                    dirty.current = true;
+                    setDraft(values);
+                  }}
+                  disabled={busy}
+                  onSave={() =>
+                    void mutate(async () => {
+                      const saved = await setApplicationSkills(
+                        id,
+                        draft,
+                        required.version,
+                      );
+                      dirty.current = false;
+                      setRequired(saved);
+                      setDraft(saved.skills);
+                      await reload();
+                      notify.success("Job skills saved");
+                    })
+                  }
+                />
+              )}
+              <div className="stage-form-actions">
+                <button
+                  className="icon-btn"
+                  disabled={busy}
+                  onClick={() =>
+                    void mutate(async () => {
+                      const run = await retrySkillExtraction(id);
+                      setStatus(run);
+                      await reload();
+                    })
+                  }
+                >
+                  Find skills automatically
+                </button>
+                <button
+                  className="text-btn"
+                  disabled={busy}
+                  onClick={() => {
+                    dirty.current = false;
+                    void reload().catch((err) =>
+                      notify.error(
+                        "Couldn’t refresh the skills",
+                        extractErrorMessage(err),
+                      ),
+                    );
+                  }}
+                >
+                  Discard unsaved skill changes
+                </button>
+              </div>
+            </details>
+            <details style={{ marginTop: 18 }}>
+              <summary>How is the match calculated?</summary>
+              <p>
+                Required skills count more than preferred or nice-to-have
+                skills. When a resume text comparison is available, it
+                contributes 30% and skill coverage contributes 70%. Otherwise
+                the score uses skill coverage alone. Your personal proficiency
+                ratings do not change the score.
+              </p>
+            </details>
+          </section>
+          <FollowUpForm
+            app={app}
+            onSaved={(fresh) => {
+              accept(fresh);
+              notify.success("Next step saved");
+              void reload().catch(() => {});
+            }}
+          />
+        </aside>
+      </div>
+      <details className="detail-danger">
+        <summary>Remove this application</summary>
         <p>
-          {app.fit
-            ? `${app.fit.overall}% overall · ${app.fit.skillMatch}% weighted skill match · ${app.fit.requiredCovered}/${app.fit.requiredTotal} skills matched${app.fit.semantic == null ? "" : ` · ${app.fit.semantic}% semantic signal`}`
-            : "No fit score until skills are recorded."}
+          Deleting permanently removes this application and its notes. To keep a
+          record, change its stage to Archived instead.
         </p>
-        <p>
-          Importance weights: required 3, preferred 2, nice to have 1. With
-          embeddings, overall = 70% skill match + 30% semantic signal. The
-          semantic signal rescales cosine 0.3–0.9 to 0–100. It is a heuristic,
-          not a hiring probability. Self-rated proficiency does not change this
-          score.
-        </p>
-        <p>
-          Matched:{" "}
-          {(required?.skills ?? [])
-            .filter((s) => mine.has(s.name))
-            .map((s) => s.name)
-            .join(", ") || "None"}
-          . Missing:{" "}
-          {(required?.skills ?? [])
-            .filter((s) => !mine.has(s.name))
-            .map((s) => s.name)
-            .join(", ") || "None"}
-          .
-        </p>
-        {status && (
-          <p role="status">
-            Extraction: {status.status ?? "pending"} {status.message}
-          </p>
-        )}
         <button
-          className="icon-btn"
+          className="icon-btn-danger"
           disabled={busy}
           onClick={() =>
             void mutate(async () => {
-              const run = await retrySkillExtraction(id);
-              setStatus(run);
-              await reload();
+              await deleteApplication(id);
+              removeApplication(id);
+              navigate("/");
+              notify.success("Application deleted");
             })
           }
         >
-          Extract again
+          Delete application
         </button>
-        {required && (
-          <TagEditor
-            skills={draft}
-            onChange={(values) => {
-              dirty.current = true;
-              setDraft(values);
-            }}
-            disabled={busy}
-            onSave={() =>
-              void mutate(async () => {
-                const saved = await setApplicationSkills(
-                  id,
-                  draft,
-                  required.version,
-                );
-                dirty.current = false;
-                setRequired(saved);
-                setDraft(saved.skills);
-                await reload();
-              })
-            }
-          />
-        )}
-        <button
-          className="icon-btn"
-          disabled={busy}
-          onClick={() => {
-            dirty.current = false;
-            void reload().catch((err) =>
-              notify.error("Could not reload", extractErrorMessage(err)),
-            );
-          }}
-        >
-          Discard requirement draft and reload
-        </button>
-      </div>
-      <FollowUpForm
-        app={app}
-        onSaved={(fresh) => {
-          accept(fresh);
-          void reload().catch(() => {});
-        }}
-      />
-      <div className="panel">
-        <h3>Stage details</h3>
-        {entries.length === 0 && <p>No stage details yet.</p>}
-        {entries.map((entry) => (
-          <StageAccordion
-            key={
-              entry.record
-                ? entry.record.id
-                : "new:" + entry.stage + ":" + stages.length
-            }
-            entry={entry}
-            applicationId={id}
-            onSaved={() =>
-              void reload().catch((err) =>
-                notify.error("Could not reload", extractErrorMessage(err)),
-              )
-            }
-            onGenerateQuestions={generate}
-            generatingRound={generating}
-          />
-        ))}
-        {questionStatus && (
-          <p role="status">
-            Question generation: {questionStatus.status}{" "}
-            {questionStatus.message}
-          </p>
-        )}
-      </div>
-      <div className="panel">
-        <h3>Interaction notes and timeline</h3>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void mutate(async () => {
-              accept(await addNote(id, note));
-              setNote("");
-            });
-          }}
-        >
-          <div className="field">
-            <label htmlFor="interaction-note">Interaction note</label>
-            <textarea
-              id="interaction-note"
-              maxLength={10000}
-              required
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-          </div>
-          <button className="btn-save" disabled={busy}>
-            Add note
-          </button>
-        </form>
-        <ul>
-          {app.timeline.map((item) => (
-            <li key={item.id}>
-              <time>{new Date(item.createdAt).toLocaleString()}</time> ·{" "}
-              {item.type}
-              <p style={{ whiteSpace: "pre-wrap" }}>{item.body}</p>
-            </li>
-          ))}
-        </ul>
-      </div>
+      </details>
     </Layout>
   );
 }

@@ -1,82 +1,103 @@
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
-
-const BASE_LINKS = [
-  { to: "/", label: "Board", end: true },
-  { to: "/alerts", label: "Alerts" },
-  { to: "/skills-gap", label: "Skills gap" },
-  { to: "/skills", label: "My skills" },
-  { to: "/resume", label: "Resume" },
-  { to: "/profile", label: "Profile" },
+import { Icon } from "./Icon.jsx";
+const groups = [
+  {
+    label: "Workspace",
+    links: [
+      { to: "/", label: "Applications", icon: "applications", end: true },
+      { to: "/alerts", label: "Next actions", icon: "alerts" },
+    ],
+  },
+  {
+    label: "Your profile",
+    links: [
+      { to: "/resume", label: "Resumes", icon: "resume" },
+      { to: "/skills", label: "My skills", icon: "skills" },
+      { to: "/skills-gap", label: "Skills insights", icon: "growth" },
+      { to: "/profile", label: "Account settings", icon: "profile" },
+    ],
+  },
 ];
-
-const ADMIN_LINKS = [
-  { to: "/admin/users", label: "Users" },
-  { to: "/admin/skills", label: "Manage skills" },
-  { to: "/admin/health", label: "System health" },
-  { to: "/admin/automation", label: "Automation log" },
+const adminLinks = [
+  { to: "/admin/users", label: "People" },
+  { to: "/admin/skills", label: "Skill library" },
+  { to: "/admin/health", label: "System status" },
+  { to: "/admin/automation", label: "Processing history" },
 ];
-
-// isOpen/onClose only matter below the 760px breakpoint, where the rail
-// becomes an off-canvas drawer (see .rail / .rail.open in index.css).
-// Above that breakpoint the rail is always visible and these are unused.
 export function Sidebar({ isOpen = false, onClose = () => {} }) {
   const { user, isAdmin, logout } = useAuth();
-
+  function nav(link) {
+    return (
+      <NavLink
+        key={link.to}
+        to={link.to}
+        end={link.end}
+        onClick={onClose}
+        className={({ isActive }) => "rail-link" + (isActive ? " active" : "")}
+      >
+        <Icon name={link.icon ?? "settings"} size={19} />
+        <span>{link.label}</span>
+      </NavLink>
+    );
+  }
   return (
-    <nav className={`rail${isOpen ? " open" : ""}`} aria-label="Primary">
-      <button className="rail-close" onClick={onClose} aria-label="Close menu">
-        ✕
-      </button>
-
+    <nav
+      id="primary-navigation"
+      className={"rail" + (isOpen ? " open" : "")}
+      aria-label="Primary"
+    >
       <div className="rail-brand">
-        job<span>.</span>tracker
-      </div>
-
-      <div className="rail-section">Pipeline</div>
-      {BASE_LINKS.map((link) => (
-        <NavLink
-          key={link.to}
-          to={link.to}
-          end={link.end}
-          onClick={onClose}
-          className={({ isActive }) => `rail-link${isActive ? " active" : ""}`}
-        >
-          <span className="dot" />
-          {link.label}
-        </NavLink>
-      ))}
-
-      {isAdmin && (
-        <>
-          <div className="rail-section">Admin</div>
-          {ADMIN_LINKS.map((link) => (
-            <NavLink
-              key={link.to}
-              to={link.to}
-              onClick={onClose}
-              className={({ isActive }) =>
-                `rail-link${isActive ? " active" : ""}`
-              }
-            >
-              <span className="dot" />
-              {link.label}
-            </NavLink>
-          ))}
-        </>
-      )}
-
-      <div className="rail-foot">
-        <div style={{ marginBottom: 8, fontSize: 13 }}>{user?.email}</div>
-        <span className={`role-badge${isAdmin ? " admin" : ""}`}>
-          {isAdmin ? "Admin" : "User"}
+        <span className="brand-symbol">
+          <Icon name="applications" size={22} />
         </span>
+        <div>
+          Job Tracker<small>A little more organized.</small>
+        </div>
         <button
-          className="icon-btn"
-          style={{ display: "block", marginTop: 12, width: "100%" }}
-          onClick={logout}
+          className="rail-close"
+          onClick={onClose}
+          aria-label="Close menu"
         >
-          Sign out
+          <Icon name="close" />
+        </button>
+      </div>
+      {groups.map((group) => (
+        <div className="nav-group" key={group.label}>
+          <div className="rail-section">{group.label}</div>
+          {group.links.map(nav)}
+        </div>
+      ))}
+      {isAdmin && (
+        <details className="admin-navigation">
+          <summary>
+            <Icon name="settings" size={18} />
+            Administration
+          </summary>
+          {adminLinks.map(nav)}
+        </details>
+      )}
+      <div className="rail-foot">
+        <div className="account-avatar" aria-hidden="true">
+          {user?.email?.[0]?.toUpperCase() ?? "J"}
+        </div>
+        <div className="account-summary">
+          <strong>
+            {user?.role === "test"
+              ? "Demo account"
+              : isAdmin
+                ? "Administrator"
+                : "Your workspace"}
+          </strong>
+          <span title={user?.email}>{user?.email}</span>
+        </div>
+        <button
+          className="signout-btn"
+          onClick={logout}
+          aria-label="Sign out"
+          title="Sign out"
+        >
+          <Icon name="logout" size={18} />
         </button>
       </div>
     </nav>

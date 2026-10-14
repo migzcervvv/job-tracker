@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Layout } from "../../components/Layout.jsx";
 import { getAutomationLog, retryAutomation } from "../../api/admin.js";
 import { extractErrorMessage } from "../../api/errors.js";
+import { progressLabel, progressMessage } from "../../api/progress.js";
 export function AdminAutomationLog() {
   const [entries, setEntries] = useState([]);
   const [filter, setFilter] = useState("");
@@ -49,7 +50,10 @@ export function AdminAutomationLog() {
     (run) => !["succeeded", "failed", "cancelled"].includes(run.status),
   );
   return (
-    <Layout title="Automation runs">
+    <Layout
+      title="Processing history"
+      description="Check automatic updates and restart anything that needs attention."
+    >
       <div className="panel">
         <p>
           {pending.length} pending ·{" "}
@@ -88,7 +92,9 @@ export function AdminAutomationLog() {
             "failed",
             "cancelled",
           ].map((state) => (
-            <option key={state}>{state}</option>
+            <option key={state} value={state}>
+              {progressLabel(state)}
+            </option>
           ))}
         </select>
         <button
@@ -106,7 +112,12 @@ export function AdminAutomationLog() {
         .map((run) => (
           <div className="panel" key={run.id}>
             <p>
-              {run.type} · {run.status} · {run.attempts} attempts ·{" "}
+              {{
+                skill_extraction: "Job skills",
+                resume_extraction: "Resume review",
+                interview_questions: "Interview preparation",
+              }[run.type] ?? "Automatic update"}{" "}
+              · {progressLabel(run.status)} · {run.attempts} attempts ·{" "}
               {Math.max(
                 0,
                 Math.round(
@@ -116,15 +127,30 @@ export function AdminAutomationLog() {
               )}
               s elapsed
             </p>
-            <code>{run.id}</code>
-            <p>{run.message}</p>
+            <p>
+              {progressMessage(
+                run,
+                run.type === "resume_extraction"
+                  ? "resume"
+                  : run.type === "interview_questions"
+                    ? "questions"
+                    : "skills",
+              )}
+            </p>
+            <details>
+              <summary>Technical details</summary>
+              <p>
+                Reference: <code>{run.id}</code>
+              </p>
+              {run.message && <p>Error code: {run.message}</p>}
+            </details>
             {["failed", "cancelled"].includes(run.status) && (
               <button
                 className="icon-btn"
                 disabled={busy}
                 onClick={() => void retry(run.id)}
               >
-                Retry current resource
+                Try processing again
               </button>
             )}
           </div>

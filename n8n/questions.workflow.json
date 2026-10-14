@@ -7,10 +7,7 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        0,
-        200
-      ],
+      "position": [0, 200],
       "parameters": {
         "httpMethod": "POST",
         "path": "jobtracker-questions",
@@ -31,10 +28,7 @@
       "name": "Validate dispatch",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        220,
-        200
-      ],
+      "position": [220, 200],
       "parameters": {
         "jsCode": "const body = $('Webhook').first().json.body;\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nif (body.schemaVersion !== 1 || !uuid.test(body.runId)) throw new Error('Invalid run contract');\nif (!uuid.test(body.applicationId)) throw new Error('Invalid resource');\nif (!uuid.test(body.stageDetailId)) throw new Error('Save the interview round first');\nreturn [{ json: body }];"
       }
@@ -44,13 +38,10 @@
       "name": "Claim run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        440,
-        200
-      ],
+      "position": [440, 200],
       "parameters": {
         "method": "POST",
-        "url": "={{ 'https://YOUR_API_HOST/api/internal/runs/'+$('Webhook').first().json.body.runId+'/claim' }}",
+        "url": "={{ 'https://jtrackerch.runasp.net/api/internal/runs/'+$('Webhook').first().json.body.runId+'/claim' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
@@ -73,10 +64,7 @@
       "name": "Claim allowed",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        660,
-        200
-      ],
+      "position": [660, 200],
       "parameters": {
         "conditions": {
           "options": {
@@ -102,10 +90,7 @@
       "name": "Extract",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1100,
-        200
-      ],
+      "position": [1100, 200],
       "parameters": {
         "method": "POST",
         "url": "https://YOUR_OPENAI_COMPATIBLE_PROVIDER/chat/completions",
@@ -134,10 +119,7 @@
       "name": "Validate result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1320,
-        200
-      ],
+      "position": [1320, 200],
       "parameters": {
         "jsCode": "try {\nconst body = $('Webhook').first().json.body;\nconst result = JSON.parse($json.choices[0].message.content);\nif (typeof result.questions !== 'string' || !result.questions.trim() || result.questions.length > 50000) throw new Error('Invalid questions');\nreturn [{json:{ok:true,payload:{runId:body.runId,stageDetailId:body.stageDetailId,questions:result.questions}}}];\n} catch { return [{json:{ok:false}}]; }"
       }
@@ -147,10 +129,7 @@
       "name": "Result valid",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        1540,
-        200
-      ],
+      "position": [1540, 200],
       "parameters": {
         "conditions": {
           "options": {
@@ -177,13 +156,10 @@
       "name": "Completion callback",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1760,
-        200
-      ],
+      "position": [1760, 200],
       "parameters": {
         "method": "PUT",
-        "url": "={{ 'https://YOUR_API_HOST'+'/api/internal/applications/'+$('Webhook').first().json.body.applicationId+'/interview-questions' }}",
+        "url": "={{ 'https://jtrackerch.runasp.net'+'/api/internal/applications/'+$('Webhook').first().json.body.applicationId+'/interview-questions' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -209,13 +185,10 @@
       "name": "Failure callback",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1980,
-        200
-      ],
+      "position": [1980, 200],
       "parameters": {
         "method": "POST",
-        "url": "={{ 'https://YOUR_API_HOST/api/internal/runs/'+$('Webhook').first().json.body.runId+'/state' }}",
+        "url": "={{ 'https://jtrackerch.runasp.net/api/internal/runs/'+$('Webhook').first().json.body.runId+'/state' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -241,10 +214,7 @@
       "name": "Done",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [
-        2200,
-        200
-      ],
+      "position": [2200, 200],
       "parameters": {}
     }
   ],

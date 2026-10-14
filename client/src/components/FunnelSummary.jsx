@@ -18,16 +18,17 @@ export function FunnelSummary({ revision }) {
   return (
     data && (
       <details className="panel">
-        <summary>
-          Pipeline metrics: {data.total} records · {data.responded} employer
-          responses
-        </summary>
+        <summary>Your progress at a glance</summary>
+        <p>
+          {data.total} applications tracked · {data.responded} with an employer
+          response recorded
+        </p>
         <table>
           <thead>
             <tr>
               <th>Stage</th>
-              <th>Count</th>
-              <th>Mean days in current stage</th>
+              <th>Applications</th>
+              <th>Average days in this stage</th>
             </tr>
           </thead>
           <tbody>
