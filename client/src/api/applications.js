@@ -5,6 +5,14 @@ export async function listApplications() {
     const { data } = await api.get("/api/applications", {
       params: { page, pageSize: 200 },
     });
+    if (!Array.isArray(data)) {
+      const error = new Error("The application list response is invalid.");
+      error.code =
+        typeof data === "string" && /<!doctype|<html/i.test(data)
+          ? "API_RETURNED_HTML"
+          : "INVALID_APPLICATION_LIST";
+      throw error;
+    }
     result.push(...data);
     if (data.length < 200) return result;
   }

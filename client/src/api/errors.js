@@ -39,6 +39,10 @@ function readable(message) {
   return translations.find(([pattern]) => pattern.test(text))?.[1] ?? text;
 }
 export function extractErrorMessage(err, fallback = DEFAULT_MESSAGE) {
+  if (err?.code === "API_RETURNED_HTML")
+    return "The website received a page instead of application data. The frontend API address needs to point to the backend.";
+  if (err?.code === "INVALID_APPLICATION_LIST")
+    return "The server returned an unexpected application list. Check that the frontend and backend deployments are up to date.";
   const status = err?.response?.status;
   if (err?.code === "ECONNABORTED" || err?.code === "ETIMEDOUT")
     return "The request took too long. Check your connection and try again.";

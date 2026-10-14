@@ -6,7 +6,7 @@ import {
   Routes,
   useLocation,
 } from "react-router-dom";
-import { GooeyToaster } from "goey-toast";
+import { Toaster } from "sonner";
 import { AuthProvider } from "./auth/AuthContext.jsx";
 import { HealthGate } from "./components/HealthGate.jsx";
 import { ProtectedRoute, AdminRoute } from "./components/ProtectedRoute.jsx";
@@ -88,7 +88,16 @@ export default function App() {
   return (
     <BrowserRouter>
       <RouteScroll />
-      <GooeyToaster position="bottom-right" theme={theme} />
+      <Toaster
+        position="top-center"
+        theme={theme}
+        closeButton
+        richColors
+        expand
+        duration={6000}
+        visibleToasts={3}
+        offset="20px"
+      />
       <HealthGate>
         <AuthProvider>
           <Suspense fallback={<RouteFallback />}>

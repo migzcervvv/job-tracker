@@ -2508,6 +2508,30 @@ h3 {
 .theme-toggle:hover {
   background: var(--panel-raised);
 }
+
+/* Solid, readable messages in both palettes, including narrow screens. */
+[data-sonner-toaster] {
+  font-family: var(--font-body);
+  --normal-bg: var(--panel);
+  --normal-text: var(--text);
+  --normal-border: var(--line-strong);
+}
+[data-sonner-toast] [data-title],
+[data-sonner-toast] [data-description] {
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+@media (max-width: 600px) {
+  html [data-sonner-toaster][data-x-position="center"] {
+    left: 16px;
+    right: 16px;
+    width: auto;
+    transform: none;
+  }
+  html [data-sonner-toaster][data-x-position="center"] [data-sonner-toast] {
+    width: 100%;
+  }
+}
 .login-screen {
   position: relative;
 }

@@ -18,6 +18,7 @@ const ApplicationsContext = createContext(null);
 export function ApplicationsProvider({ children }) {
   const [applications, setApplications] = useState(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const polls = useRef(new Map());
   const mounted = useRef(true);
   const revision = useRef(0);
@@ -28,10 +29,14 @@ export function ApplicationsProvider({ children }) {
       if (mounted.current && request === revision.current) {
         setApplications(data);
         setLoadFailed(false);
+        setLoadError("");
       }
       return data;
     } catch (err) {
-      if (mounted.current && request === revision.current) setLoadFailed(true);
+      if (mounted.current && request === revision.current) {
+        setLoadFailed(true);
+        setLoadError(extractErrorMessage(err));
+      }
       throw err;
     }
   }, []);
@@ -43,13 +48,19 @@ export function ApplicationsProvider({ children }) {
     );
   }, []);
   useEffect(() => {
+    let active = true;
     mounted.current = true;
-    void refresh().catch((err) =>
-      notify.error("Couldn’t load your applications", extractErrorMessage(err)),
-    );
+    void refresh().catch((err) => {
+      if (active)
+        notify.error(
+          "Couldn’t load your applications",
+          extractErrorMessage(err),
+        );
+    });
     const activePolls = polls.current;
     // Lifecycle counters intentionally change during cleanup; these refs are not DOM nodes.
     const dispose = () => {
+      active = false;
       mounted.current = false;
       revision.current++;
       activePolls.forEach((stop) => stop());
@@ -95,6 +106,7 @@ export function ApplicationsProvider({ children }) {
       value={{
         applications,
         loadFailed,
+        loadError,
         refresh,
         addApplication,
         updateApplication,

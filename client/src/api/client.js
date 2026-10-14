@@ -1,9 +1,13 @@
 import axios from "axios";
 import { AUTH_STORAGE_KEY } from "../auth/constants.js";
 import { notify } from "../notify.js";
+import { resolveApiBaseUrl } from "./config.js";
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
+  baseURL: resolveApiBaseUrl(
+    import.meta.env.VITE_API_URL,
+    import.meta.env.PROD,
+  ),
   timeout: 15000,
 });
 

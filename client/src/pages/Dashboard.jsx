@@ -41,7 +41,7 @@ export function Dashboard() {
     const timer = setInterval(() => setCurrentTime(Date.now()), 60000);
     return () => clearInterval(timer);
   }, []);
-  const { applications, loadFailed, updateApplication, refresh } =
+  const { applications, loadFailed, loadError, updateApplication, refresh } =
     useApplications();
   const navigate = useNavigate();
   const [view, setView] = useState("active");
@@ -354,8 +354,8 @@ export function Dashboard() {
             <Icon name="alerts" size={28} />
             <h2>Your applications couldn’t load</h2>
             <p>
-              Check your connection and try again. Your saved applications are
-              still in your account.
+              {loadError ||
+                "Check your connection and try again. Your saved applications are still in your account."}
             </p>
             <button
               className="icon-btn"

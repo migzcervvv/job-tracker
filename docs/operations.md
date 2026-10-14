@@ -4,7 +4,7 @@
 
 The frontend runs from VS Code with Vite and deploys to Netlify. The backend runs from Visual Studio 2022 and deploys to MonsterASP using the existing WebDeploy profile. Existing HTTP, HTTPS and IIS Express launch profiles are preserved.
 
-Frontend configuration is `client/.env.local` during development and Netlify build environment variables in production. `VITE_API_URL` is the API origin, without a trailing `/api`. The default HTTPS backend profile uses `https://localhost:7179`; HTTP uses `http://localhost:5233`. IIS Express uses its existing launch-settings ports. Frontend environment changes require a Vite restart or a new Netlify build.
+Frontend configuration is `client/.env.local` during development and Netlify build environment variables in production. `VITE_API_URL` is the API origin, without a trailing `/api`. When omitted, the client defaults to `https://localhost:7179` in development and `https://jtrackerch.runasp.net` in production. An accidentally appended `/api` is removed because request paths already include it. Explicit environment values override the defaults. The default HTTPS backend profile uses `https://localhost:7179`; HTTP uses `http://localhost:5233`. IIS Express uses its existing launch-settings ports. Frontend environment changes require a Vite restart or a new Netlify build.
 
 Local private backend settings belong in Visual Studio **Manage User Secrets**. ASP.NET loads appsettings, development user secrets and environment variables. The design-time EF factory reads matching configuration too, so Package Manager Console migrations can use the same development connection.
 
