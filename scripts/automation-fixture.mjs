@@ -29,4 +29,3 @@ export function createFixture({ key, apiBase, send = fetch }) {
     }
   });
 }
-if (process.argv[1]?.endsWith("automation-fixture.mjs")) createFixture({ key: process.env.AUTOMATION_KEY, apiBase: process.env.API_BASE_URL ?? "http://localhost:8080" }).listen(Number(process.env.PORT ?? 5678), "0.0.0.0");

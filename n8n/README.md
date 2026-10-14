@@ -12,7 +12,7 @@ These six inactive exports are sanitized workflow templates. Static contract tes
 6. For reminders/digest, replace the sender with a verified address and configure the Resend authorization credential. Preserve the provider idempotency key and the API delivery lease.
 7. Activate validated workflows. Configure API URLs for the production webhook paths `/webhook/jobtracker-skills`, `/webhook/jobtracker-questions`, and `/webhook/jobtracker-resumes`; test-webhook URLs are temporary.
 
-The Compose n8n profile exposes an editor at `http://localhost:5678`. The API continues to target its fixture until its `N8n:BaseUrl` and three webhook URLs are overridden. n8n container callbacks can use `http://api:8080` in local development. The parser has no public host port; use `http://parser:8000/extract` from n8n. The parser download still requires real signed HTTPS storage.
+Use your existing n8n instance. Configure the API with its base URL and the three active production webhook URLs. Local callbacks must reach the API address used by Visual Studio; production callbacks target the HTTPS MonsterASP origin. A workflow that uses the retained secure parser requires a running parser endpoint and the matching X-Parser-Key credential. It is independent of frontend/backend startup.
 
 ## Payloads and timing
 
@@ -42,6 +42,6 @@ Reminder endpoints return only opted-in recipients. Delivery claims expire after
 
 Exports disable saved successful, failed, and manual execution data. Prompts, extracted text, signed download URLs, and provider responses contain personal data; leave execution-history storage disabled. Parser logs omit request URLs. Legacy API automation message bodies are scrubbed by the new migration.
 
-Preserve the n8n encryption key across upgrades and backup/restore. Its PostgreSQL database and credentials are separate operational resources from application data. GCP Terraform describes a reference deployment and has not been applied by these repairs. The private Cloud Run default needs authorized ingress or an explicitly configured public webhook gateway before an external dispatcher can invoke it.
+Preserve your existing n8n encryption key across upgrades and backup/restore. Its database and credentials remain separate operational resources from application data. This repository does not create or replace your n8n hosting.
 
 Primary references: [Webhook response/authentication](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.webhook/), [health monitoring](https://docs.n8n.io/hosting/logging-monitoring/monitoring/).

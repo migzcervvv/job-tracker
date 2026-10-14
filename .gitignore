@@ -7,11 +7,6 @@
 .env
 .env.*
 !.env.example
-*.tfstate
-*.tfstate.*
-*.tfvars
-!*.tfvars.example
-.terraform/
 
 # User-specific files
 *.rsuser

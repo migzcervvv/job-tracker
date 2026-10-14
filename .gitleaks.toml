@@ -4,7 +4,7 @@ useDefault = true
 # Allow only deterministic public fixtures. Production credentials are never allowlisted.
 [allowlist]
 description = "Public, non-operational fixture secrets"
-paths = ['''(^|/|\\)(node_modules|bin|obj|dist|artifacts|\.terraform|\.vs)(/|\\)''']
+paths = ['''(^|/|\\)(node_modules|bin|obj|dist|artifacts|\.vs)(/|\\)''']
 regexTarget = "match"
 regexes = [
   '''integration-test-key-with-32-bytes-minimum''',

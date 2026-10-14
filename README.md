@@ -1,53 +1,53 @@
 # Job Tracker
 
-Job application tracking with an ASP.NET Core 8 API, React client, PostgreSQL/pgvector, private resume storage, and n8n automation.
+ASP.NET Core 8 backend developed in Visual Studio 2022 and published to MonsterASP. React frontend developed in VS Code and published to Netlify. PostgreSQL/pgvector stores application data; existing n8n workflows provide automation.
 
-Applications have Saved, active, and distinct terminal states. The tracker supports editing, search and sorting, follow-ups, snooze, employer-response tracking, contacts, notes, deadline alerts, explicit resume selection, CSV/JSON portability, browser capture, and funnel metrics. Bulk archive supports undo.
+## Run locally
 
-Automation uses a persistent database outbox. A successful webhook response means dispatched; only a correlated authenticated callback completes a run. Retries receive new run IDs. Interview generation targets a saved round. Resume extraction produces a reviewable proposal and never selects the active resume automatically.
+1. Open `JobTracker.Api/JobTracker.Api.sln` in Visual Studio 2022. Use the .NET SDK selected by `global.json` (8.0.425 or a later 8.0.4xx patch).
+2. Right-click the API project and choose **Manage User Secrets**. Keep private backend settings there: `ConnectionStrings:Default`, `Jwt:Key`, `Automation:ApiKey`, n8n URLs, and Supabase settings. Retain your existing configured values. [Configuration details](docs/operations.md).
+3. Apply outstanding migrations to your development database before starting the updated API. In Visual Studio's Package Manager Console, select JobTracker.Api and run `Update-Database -Context AppDbContext`.
+4. Select the **https** launch profile and start debugging. The API opens at `https://localhost:7179`; Swagger is at `/swagger`. The existing HTTP and IIS Express profiles are also preserved.
+5. Open `client` in VS Code. If it has no local environment file, copy `client/.env.example` to `client/.env.local`. Set `VITE_API_URL` to the API origin for the selected Visual Studio profile.
+6. In the client terminal, run `npm ci`, then `npm run dev`. The configured local frontend origin is `http://localhost:5173`.
 
-## Development
+There is no root environment file. Backend settings use normal ASP.NET configuration; frontend settings stay in `client`. The API's development settings include the frontend CORS origin. A trusted ASP.NET HTTPS development certificate is required when using the HTTPS profile.
 
-Prerequisites: .NET SDK specified by `global.json`, Node.js 24, and Docker with Linux containers for database/integration checks.
+Resume uploads use your private Supabase `resumes` bucket with server-only `Supabase:Url` and `Supabase:ServiceRoleKey`. n8n receives authenticated triggers and completes them through correlated callbacks. The versioned templates and contracts are documented in [n8n/README.md](n8n/README.md). The secure PDF/Word parser remains under `parser` for workflows that use it; it is not part of the Visual Studio or Netlify startup.
 
-1. Copy `.env.example` to `.env` and replace its local placeholder secrets.
-2. Run `docker compose up --build -d`. It starts local PostgreSQL/pgvector, applies migrations, starts the API at `http://localhost:8080`, and runs a deterministic automation fixture.
-3. In `client`, run `npm ci`. Create ignored `client/.env.local` containing `VITE_API_URL=http://localhost:8080`, then run `npm run dev`.
-4. Sign in with the administrator credentials configured in the local environment. Create ordinary users from administration.
+## Tests
 
-The fixture does not call an LLM or parse documents. Real uploads require a private Supabase `resumes` bucket and server-only `Supabase:Url`/`Supabase:ServiceRoleKey` configuration. Optional demo credentials create a test-role account; its application data and uploads are ephemeral per-session, and automation is simulated. Demo sessions cannot change persistent Identity credentials.
+Backend tests run through Visual Studio Test Explorer. Frontend tests run using `npm test` inside `client`.
 
-For real automation, use the inactive workflow templates and setup instructions in [n8n/README.md](n8n/README.md). Starting the optional n8n profile does not switch the API away from the fixture automatically.
-
-## Verification
-
-Run the local API, frontend, migration, contract, build, audit, and formatting checks:
+From the project root, run the combined verification script:
 
 ```powershell
 ./scripts/verify.ps1
 ```
 
-The PostgreSQL test is skipped unless an isolated loopback database named `jobtracker_test` is provided:
+This checks backend/frontend tests, builds, formatting, lint, migration consistency, dependency auditing, and automation contracts. Most tests use local fixtures and in-memory databases. The PostgreSQL integration test requires a separate local PostgreSQL installation with pgvector and a disposable database named `jobtracker_test`:
 
 ```powershell
-$env:JOBTRACKER_TEST_DATABASE = 'Host=localhost;Database=jobtracker_test;Username=jobtracker;Password=YOUR_LOCAL_PASSWORD'
+$env:JOBTRACKER_TEST_DATABASE = 'Host=localhost;Database=jobtracker_test;Username=YOUR_TEST_USER;Password=YOUR_TEST_PASSWORD'
 ./scripts/verify.ps1 -RequirePostgres
 ```
 
-CI runs the PostgreSQL integration test and rejects skipped tests. It also builds API/migration/parser containers, tests PDF/DOCX parsing, verifies a database restore containing vectors, validates Compose and Terraform, and scans the checkout for secrets. Local parser checks require `pip install -r parser/requirements.txt` followed by `python -m unittest discover -s parser -v`.
+The database test refuses remote hosts and production database names. CI installs PostgreSQL and pgvector directly on its runner, runs this test, rejects skips, and verifies backup restoration with vector data. A separate Python job checks the retained document parser. Secret scanning, frontend checks, and backend publishing also run in CI.
 
-[REPAIR_STATUS.md](REPAIR_STATUS.md) maps the review findings to repairs and records verification limits. [docs/operations.md](docs/operations.md) describes deployment, rollback, configuration, and recovery. [PROJECT_REVIEW.md](PROJECT_REVIEW.md) is the original review, with historical findings and line numbers.
+## Deployment
 
-## Fit score
+Netlify builds the `client` project with `npm run build` and publishes `client/dist` (or `dist` when the configured base directory is `client`). Netlify's `VITE_API_URL` points to the HTTPS MonsterASP API origin. These frontend values are public build-time configuration, never private API credentials.
 
-Skill coverage is the sum of matched importance weights divided by all requirement weights. Importance ranges from 1 to 3. When compatible 1536-dimensional resume and requirement embeddings exist, the score blends 70% weighted coverage and 30% semantic similarity, with cosine rescaled from 0.3–0.9 and clamped. Otherwise it uses coverage alone.
+The API retains its MonsterASP WebDeploy publish profile. Visual Studio Publish remains available. GitHub deployment also verifies the revision, applies migrations, publishes, and checks readiness. Pushes to `main` trigger that workflow. Runtime backend settings remain on MonsterASP. [Operations and recovery](docs/operations.md).
 
-Cosine divides by both vector magnitudes. Proficiency ratings are personal notes and do not change coverage or fit. Scores are heuristics, not hiring probabilities. Detail and board use the same scoring service and show missing/matched requirements.
+## Application behavior
 
-## Security and data
+Applications support Saved and active states, distinct outcomes, editing, search/sort/filter, contacts, notes, follow-ups, snooze, deadline alerts, bulk archive/undo, per-application resume selection, import/export, capture, and funnel metrics.
 
-JWT validation checks current account existence, security stamp, lockout, and roles. Tenant filters fail closed. Internal endpoints require `X-Automation-Key`; browser credentials cannot invoke them. Automation credentials, storage keys, database passwords, and provider keys stay outside tracked configuration.
+Automation has a persistent database outbox, bounded retries and deadlines. Webhook acknowledgement means dispatched; only a successful callback completes the run. Interview generation targets a saved round. Resume extraction produces a reviewable proposal and never automatically selects the active resume.
 
-Previously committed credentials require external rotation and Git-history remediation. Removing them from the current checkout does not revoke them. Current secret scanning does not certify old history as clean.
+Fit uses weighted skill coverage (importance 1–3). With compatible 1536-dimensional embeddings, it blends 70% coverage and 30% cosine similarity rescaled from 0.3–0.9. Otherwise it uses coverage alone. Proficiency ratings are personal notes. Scores are heuristics, not hiring probabilities.
 
-Application JSON backups include core fields, requirement importance, stage data, generated questions, manual notes, and follow-ups. They do not contain resume binaries, embeddings, account credentials, or an audit-history replay. CSV is a subset and prefixes spreadsheet-formula cells with an apostrophe. Account deletion revokes sessions and removes owned database records, while durable cleanup retries storage removal.
+JWT validation checks current account existence, security stamp, lockout, and roles. Tenant filters fail closed; internal callbacks require `X-Automation-Key`. Existing exposed credentials still need external rotation and history cleanup.
+
+[REPAIR_STATUS.md](REPAIR_STATUS.md) maps repairs and tests to the original [PROJECT_REVIEW.md](PROJECT_REVIEW.md). JSON exports preserve application fields, requirements, stages and manual notes; resume binaries and embeddings are not included. Account deletion revokes sessions, removes owned database records and queues external storage cleanup.

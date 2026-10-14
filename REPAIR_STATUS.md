@@ -1,4 +1,4 @@
-# Review repair status — 13 October 2026
+# Review repair status — updated 14 October 2026
 
 The original [PROJECT_REVIEW.md](PROJECT_REVIEW.md) remains a historical snapshot. Repository fixes and tests are implemented below. External credential rotation/history cleanup, deployed infrastructure, production data reconciliation, and live workflow execution remain outstanding.
 
@@ -47,7 +47,7 @@ CSV is a subset of the JSON backup. Binary resumes and complete audit history ar
 
 ## DevOps changes
 
-PR CI and deployment CI share gates. Deployment uses the tested SHA, serialized production releases, migration checks and post-deployment smoke tests. Added Linux API/migration/parser images, local PostgreSQL+pgvector and deterministic fixture, optional n8n profile, sanitized workflow exports/contracts, Terraform reference configuration and provider lock, backup/restore rehearsal, and secret scanning.
+PR CI and deployment CI share gates. Deployment uses the tested SHA, serialized MonsterASP releases, migration checks and post-deployment smoke tests. CI installs PostgreSQL/pgvector and Python dependencies directly on its runners, verifies database restore including vector values, and scans the checkout for secrets. Sanitized n8n workflow exports and regression fixtures remain. Local startup uses Visual Studio 2022 and VS Code; frontend deployment remains Netlify. Unused container and Terraform infrastructure, the root environment files, and the standalone fixture launcher were removed without removing the repaired application behavior or its tests.
 
 No checks open a hosted user database. PostgreSQL integration requires a loopback disposable database; CI rejects skips. n8n templates are inactive and contain placeholder hosts, sender/model and credential references.
 
@@ -62,11 +62,11 @@ No checks open a hosted user database. PostgreSQL integration requires a loopbac
 | Frontend strict lint / formatting / production build | Passed; main chunk about 389 kB |
 | npm audit | 0 reported vulnerabilities |
 | EF model consistency / idempotent migration SQL | Passed/generated |
-| Terraform format / initialization / validation | Passed; no plan or apply |
-| Workflow/Compose YAML syntax | Passed |
+| Visual Studio project / launch profiles | Container tooling removed; HTTP, HTTPS and IIS Express preserved |
+| GitHub workflow YAML syntax | Passed |
 | Gitleaks current-checkout scan | Passed |
 | Git whitespace validation | Passed |
 
-Docker image builds, the PostgreSQL integration/restore checks, and live n8n/provider execution were not run locally because Docker/PostgreSQL are unavailable. They are CI gates; the new CI workflow has not been executed remotely during this repair. Production migration, hosting, credential rotation, history rewriting and legacy external-file reconciliation were not performed.
+Native PostgreSQL integration/restore checks and live n8n/provider execution remain unverified locally. PostgreSQL checks are CI gates; the updated workflow has not been executed remotely during this cleanup. Production migration, hosting, credential rotation, history rewriting and legacy external-file reconciliation were not performed. The retained parser is a secure workflow component, not a new requirement for starting the frontend or API.
 
 Run local checks using `./scripts/verify.ps1`. Use `./scripts/verify.ps1 -RequirePostgres` with the isolated test connection for the database gate. [docs/operations.md](docs/operations.md) and [n8n/README.md](n8n/README.md) specify operational setup and remaining external work.

@@ -21,7 +21,10 @@ public class PostgresIntegrationTests
         await using (var extension = new NpgsqlCommand("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public", admin)) await extension.ExecuteNonQueryAsync();
         await using (var command = new NpgsqlCommand($"CREATE SCHEMA \"{schema}\"", admin)) await command.ExecuteNonQueryAsync();
         connection.SearchPath = schema + ",public";
-        var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(connection.ConnectionString, o => o.UseVector()).Options;
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(connection.ConnectionString, o => {
+            o.UseVector();
+            o.MigrationsHistoryTable("__EFMigrationsHistory", schema);
+        }).Options;
         var owner = Guid.NewGuid();
         try
         {
