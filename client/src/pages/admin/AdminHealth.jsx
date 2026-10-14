@@ -6,7 +6,7 @@ import { notify } from "../../notify.js";
 
 const STATUS_COLOR = {
   healthy: "var(--s-interview)",
-  unreachable: "#9d4038",
+  unreachable: "var(--danger)",
   not_configured: "var(--text-dim)",
 };
 

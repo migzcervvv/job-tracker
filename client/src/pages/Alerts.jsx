@@ -123,7 +123,7 @@ export function Alerts() {
               <div
                 className="stat-value"
                 style={{
-                  color: data.noReply.length > 0 ? "#e07a6f" : undefined,
+                  color: data.noReply.length > 0 ? "var(--danger)" : undefined,
                 }}
               >
                 {data.noReply.length}

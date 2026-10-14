@@ -7,7 +7,7 @@
       "warn",
       {
         "allowConstantExport": true,
-        "allowExportNames": ["useAuth", "useApplications", "SKILL_LEVELS"]
+        "allowExportNames": ["useAuth", "useApplications", "useTheme", "SKILL_LEVELS"]
       }
     ]
   }

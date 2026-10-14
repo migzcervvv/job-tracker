@@ -12,6 +12,7 @@ import { HealthGate } from "./components/HealthGate.jsx";
 import { ProtectedRoute, AdminRoute } from "./components/ProtectedRoute.jsx";
 import { Login } from "./pages/Login.jsx";
 import { Dashboard } from "./pages/Dashboard.jsx";
+import { useTheme } from "./theme/ThemeProvider.jsx";
 
 // Everything except login and the board is lazy — those two are the only
 // routes on the critical path to first paint. The rest (admin section,
@@ -83,10 +84,11 @@ function RouteScroll() {
 }
 
 export default function App() {
+  const { theme } = useTheme();
   return (
     <BrowserRouter>
       <RouteScroll />
-      <GooeyToaster position="bottom-right" theme="light" />
+      <GooeyToaster position="bottom-right" theme={theme} />
       <HealthGate>
         <AuthProvider>
           <Suspense fallback={<RouteFallback />}>

@@ -3,6 +3,7 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
 import { extractErrorMessage } from "../api/errors.js";
 import { Icon } from "../components/Icon.jsx";
+import { ThemeToggle } from "../components/ThemeToggle.jsx";
 export function Login() {
   const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -33,6 +34,9 @@ export function Login() {
   }
   return (
     <div className="login-screen">
+      <div className="login-theme">
+        <ThemeToggle />
+      </div>
       <div className="login-story">
         <div className="login-brand">
           <span className="brand-symbol">

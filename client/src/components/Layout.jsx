@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Sidebar } from "./Sidebar.jsx";
+import { ThemeToggle } from "./ThemeToggle.jsx";
 const descriptions = {
   Applications: "Keep track of every opportunity, one next step at a time.",
   "New application":
@@ -65,7 +66,10 @@ export function Layout({ title, description, actions, children }) {
               )}
             </div>
           </div>
-          <div className="topbar-actions">{actions}</div>
+          <div className="topbar-actions">
+            <ThemeToggle />
+            {actions}
+          </div>
         </header>
         <main className="content" id="main-content" tabIndex={-1}>
           {children}

@@ -56,7 +56,10 @@ export function ResumeUpload({ onUploaded }) {
         }}
         style={
           dragOver
-            ? { borderColor: "var(--accent)", background: "#eaf3e4" }
+            ? {
+                borderColor: "var(--accent)",
+                background: "var(--panel-raised)",
+              }
             : undefined
         }
       >

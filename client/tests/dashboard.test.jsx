@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import { Dashboard } from "../src/pages/Dashboard.jsx";
+import { ThemeProvider } from "../src/theme/ThemeProvider.jsx";
 import { updateApplicationStatus } from "../src/api/applications.js";
 import { useApplications } from "../src/state/ApplicationsContext.jsx";
 vi.mock("../src/state/ApplicationsContext.jsx", () => ({
@@ -66,7 +67,9 @@ beforeEach(() => {
 function show() {
   return render(
     <MemoryRouter>
-      <Dashboard />
+      <ThemeProvider>
+        <Dashboard />
+      </ThemeProvider>
     </MemoryRouter>,
   );
 }
