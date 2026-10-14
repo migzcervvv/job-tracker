@@ -134,7 +134,8 @@ app.Use(async (context, next) =>
     { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { error = "Concurrent update. Reload before retrying." }); }
     catch (Exception ex)
     {
-        app.Logger.LogError("Request {RequestId} failed ({ExceptionType})", context.TraceIdentifier, ex.GetType().Name);
+        app.Logger.LogError(ex, "Request {RequestId} failed: {Method} {Path} ({ExceptionType})",
+            context.TraceIdentifier, context.Request.Method, context.Request.Path, ex.GetType().Name);
         if (!context.Response.HasStarted) { context.Response.StatusCode = 500; await context.Response.WriteAsJsonAsync(new { error = "Internal server error", requestId = context.TraceIdentifier }); }
     }
 });
