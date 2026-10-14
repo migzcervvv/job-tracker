@@ -50,9 +50,10 @@ public class SkillsController(AppDbContext db, ISkillResolver resolver) : Contro
     [HttpGet("applications/{id:guid}/skills")]
     public async Task<IActionResult> Required(Guid id)
     {
-        var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
+        var ct = HttpContext.RequestAborted;
+        var app = await db.Applications.AsNoTracking().Where(a => a.Id == id).Select(a => new { a.Version }).FirstOrDefaultAsync(ct);
         if (app == null) return NotFound();
-        return Ok(new { version = app.Version, skills = await db.ApplicationSkills.Where(s => s.ApplicationId == id).OrderBy(s => s.Skill!.Name).Select(s => new { s.Skill!.Name, importance = Math.Clamp(s.Importance, 1, 3) }).ToListAsync() });
+        return Ok(new { version = app.Version, skills = await db.ApplicationSkills.AsNoTracking().Where(s => s.ApplicationId == id).OrderBy(s => s.Skill!.Name).Select(s => new { s.Skill!.Name, importance = Math.Clamp(s.Importance, 1, 3) }).ToListAsync(ct) });
     }
     [HttpPut("applications/{id:guid}/skills")]
     public async Task<IActionResult> SetRequired(Guid id, RequiredSkillsRequest req)

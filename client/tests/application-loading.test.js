@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { api } from "../src/api/client.js";
-import { listApplications } from "../src/api/applications.js";
-import { resolveApiBaseUrl } from "../src/api/config.js";
+import { listApplications, getApplication } from "../src/api/applications.js";
+import { resolveApiBaseUrl, resolveApiTimeout } from "../src/api/config.js";
 import { extractErrorMessage } from "../src/api/errors.js";
 
 vi.mock("../src/api/client.js", () => ({ api: { get: vi.fn() } }));
@@ -9,11 +9,61 @@ beforeEach(() => {
   api.get.mockReset();
 });
 
+it.each([
+  null,
+  {},
+  { id: "one", title: "Engineer", timeline: null, stageDetails: [] },
+])("rejects incomplete detail data before rendering", async (data) => {
+  api.get.mockResolvedValue({ data });
+  await expect(getApplication("one")).rejects.toMatchObject({
+    code: "INVALID_APPLICATION_DETAIL",
+  });
+});
+
+it("allows breakpoint debugging without weakening production timeouts", () => {
+  expect(resolveApiTimeout(undefined, true)).toBe(120000);
+  expect(resolveApiTimeout("300000", true)).toBe(300000);
+  for (const value of [
+    undefined,
+    "",
+    "invalid",
+    "0",
+    "-1",
+    "Infinity",
+    "600001",
+  ]) {
+    expect(resolveApiTimeout(value, true)).toBe(120000);
+  }
+  expect(resolveApiTimeout("600000", false)).toBe(15000);
+});
+
 it("uses Netlify's same-origin proxy even with a stale production build variable", () => {
-  expect(resolveApiBaseUrl(undefined, true)).toBe("");
-  expect(resolveApiBaseUrl("https://localhost:7179/api", true)).toBe("");
-  expect(resolveApiBaseUrl(" ", true)).toBe("");
+  expect(resolveApiBaseUrl(undefined, true, "job-trackerch.netlify.app")).toBe(
+    "",
+  );
+  expect(
+    resolveApiBaseUrl(
+      "https://localhost:7179/api",
+      true,
+      "job-trackerch.netlify.app",
+    ),
+  ).toBe("");
+  expect(resolveApiBaseUrl(" ", true, "job-trackerch.netlify.app")).toBe("");
   expect(resolveApiBaseUrl(undefined, false)).toBe("https://localhost:7179");
+});
+
+it("uses the local backend when previewing a production build on localhost", () => {
+  for (const host of ["localhost", "127.0.0.1", "[::1]", "app.localhost"]) {
+    expect(resolveApiBaseUrl("https://localhost:7179", true, host)).toBe(
+      "https://localhost:7179",
+    );
+    expect(resolveApiBaseUrl(undefined, true, host)).toBe(
+      "https://localhost:7179",
+    );
+  }
+  expect(
+    resolveApiBaseUrl("https://localhost:44393/api/", true, "localhost"),
+  ).toBe("https://localhost:44393");
 });
 
 it("preserves custom hosts and prevents duplicate api path segments", () => {

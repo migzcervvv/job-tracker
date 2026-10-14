@@ -5,6 +5,22 @@ using Microsoft.EntityFrameworkCore;
 namespace JobTracker.Api.Tests;
 public class FitScorerTests
 {
+    [Fact]
+    public async Task EmptyPageNeedsNoDatabaseAccess()
+    {
+        var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        await db.DisposeAsync();
+        Assert.Empty(await new FitScorer(db).ScoreAsync(Guid.NewGuid(), []));
+    }
+
+    [Fact]
+    public async Task CancelledRequestStopsScoring()
+    {
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new FitScorer(db).ScoreAsync(Guid.NewGuid(), [Guid.NewGuid()], cancellation.Token));
+    }
     [Theory]
     [InlineData(3, 1, 75)]
     [InlineData(1, 3, 25)]
@@ -27,7 +43,11 @@ public class FitScorerTests
         var user = Guid.NewGuid(); var other = Guid.NewGuid();
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options, new FakeCurrentUser(user));
         var mine = new Application { Id = Guid.NewGuid(), UserId = user }; var theirs = new Application { Id = Guid.NewGuid(), UserId = other };
-        db.Applications.AddRange(mine, theirs); await db.SaveChangesAsync();
+        db.Applications.AddRange(mine, theirs);
+        var skill = new Skill { Id = Guid.NewGuid(), Name = "linux" };
+        db.Skills.Add(skill);
+        db.ApplicationSkills.Add(new ApplicationSkill { ApplicationId = theirs.Id, SkillId = skill.Id, Importance = 3 });
+        await db.SaveChangesAsync();
         Assert.Empty(await new FitScorer(db).ScoreAsync(user, new() { mine.Id, theirs.Id }));
     }
     [Fact] public void IdenticalVectorsScoreOne() => Assert.Equal(1.0, FitScorer.CosineSimilarity(new[] { 1f, 2f }, new[] { 1f, 2f }), 5);

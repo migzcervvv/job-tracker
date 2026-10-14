@@ -1,9 +1,10 @@
 import { api } from "./client.js";
-export async function listApplications() {
+export async function listApplications(signal) {
   const result = [];
   for (let page = 1; ; page++) {
     const { data } = await api.get("/api/applications", {
       params: { page, pageSize: 200 },
+      signal,
     });
     if (!Array.isArray(data)) {
       const error = new Error("The application list response is invalid.");
@@ -30,7 +31,19 @@ export async function updateApplicationStatus(id, status, version) {
   ).data;
 }
 export async function getApplication(id, signal) {
-  return (await api.get(`/api/applications/${id}`, { signal })).data;
+  const { data } = await api.get(`/api/applications/${id}`, { signal });
+  if (
+    !data ||
+    typeof data.id !== "string" ||
+    typeof data.title !== "string" ||
+    !Array.isArray(data.timeline) ||
+    !Array.isArray(data.stageDetails)
+  ) {
+    const error = new Error("The application detail response is invalid.");
+    error.code = "INVALID_APPLICATION_DETAIL";
+    throw error;
+  }
+  return data;
 }
 export async function deleteApplication(id) {
   await api.delete(`/api/applications/${id}`);

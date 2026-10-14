@@ -8,38 +8,61 @@ public record FitBreakdown(int Overall, int SkillMatch, int? Semantic, int Requi
 
 public interface IFitScorer
 {
-    Task<Dictionary<Guid, FitBreakdown>> ScoreAsync(Guid userId, List<Guid> applicationIds);
+    Task<Dictionary<Guid, FitBreakdown>> ScoreAsync(Guid userId, List<Guid> applicationIds, CancellationToken ct = default);
 }
 
 public class FitScorer(AppDbContext db) : IFitScorer
 {
-    public async Task<Dictionary<Guid, FitBreakdown>> ScoreAsync(Guid userId, List<Guid> applicationIds)
+    public async Task<Dictionary<Guid, FitBreakdown>> ScoreAsync(Guid userId, List<Guid> applicationIds, CancellationToken ct = default)
     {
-        var mySkillIds = (await db.UserSkills
+        ct.ThrowIfCancellationRequested();
+        var result = new Dictionary<Guid, FitBreakdown>();
+        if (applicationIds.Count == 0) return result;
+
+        var links = await db.ApplicationSkills.AsNoTracking()
+            .Where(x => applicationIds.Contains(x.ApplicationId) && x.Application!.UserId == userId)
+            .Select(x => new { x.ApplicationId, x.SkillId, x.Importance })
+            .ToListAsync(ct);
+        // New applications have no extracted skills. They need no profile,
+        // resume or vector queries, and no score is different from a zero score.
+        if (links.Count == 0) return result;
+
+        var mySkillIds = (await db.UserSkills.AsNoTracking()
             .Where(us => us.UserId == userId)
             .Select(us => us.SkillId)
-            .ToListAsync()).ToHashSet();
+            .ToListAsync(ct)).ToHashSet();
 
-        var links = await db.ApplicationSkills
-            .Where(x => applicationIds.Contains(x.ApplicationId))
-            .Select(x => new { x.ApplicationId, x.SkillId, x.Importance })
-            .ToListAsync();
-
-        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
-
-        var apps = await db.Applications
-            .Where(a => applicationIds.Contains(a.Id))
-            .Select(a => new { a.Id, a.RequirementsEmbedding, a.ResumeId })
-            .ToListAsync();
-
-        var result = new Dictionary<Guid, FitBreakdown>();
-        var byApplication = links.ToLookup(l => l.ApplicationId);
-        var resumes = await db.Resumes.AsNoTracking().Where(r => r.UserId == userId).Select(r => new { r.Id, r.Embedding }).ToDictionaryAsync(r => r.Id);
-
-        foreach (var app in apps)
+        var semanticScores = new Dictionary<Guid, int>();
+        // Demo/test stores deliberately do not map vector properties.
+        if (db.Database.IsNpgsql())
         {
-            var required = byApplication[app.Id].ToList();
-            if (required.Count == 0) continue; // no tagged skills -> no score, not a zero score
+            var scoredIds = links.Select(l => l.ApplicationId).Distinct().ToList();
+            var apps = await db.Applications.AsNoTracking()
+                .Where(a => a.UserId == userId && scoredIds.Contains(a.Id) && a.RequirementsEmbedding != null)
+                .Select(a => new { a.Id, a.RequirementsEmbedding, a.ResumeId })
+                .ToListAsync(ct);
+            var resumeIds = apps.Where(a => a.ResumeId.HasValue).Select(a => a.ResumeId!.Value).Distinct().ToList();
+            var resumes = new Dictionary<Guid, Pgvector.Vector?>();
+            if (resumeIds.Count > 0)
+                resumes = await db.Resumes.AsNoTracking().Where(r => r.UserId == userId && resumeIds.Contains(r.Id))
+                    .Select(r => new { r.Id, r.Embedding }).ToDictionaryAsync(r => r.Id, r => r.Embedding, ct);
+            var profileEmbedding = apps.Any(a => a.ResumeId == null)
+                ? await db.UserProfiles.AsNoTracking().Where(p => p.UserId == userId).Select(p => p.ResumeEmbedding).FirstOrDefaultAsync(ct)
+                : null;
+            foreach (var app in apps)
+            {
+                var resumeEmbedding = app.ResumeId.HasValue ? resumes.GetValueOrDefault(app.ResumeId.Value) : profileEmbedding;
+                if (resumeEmbedding == null) continue;
+                var sim = CosineSimilarity(resumeEmbedding.ToArray(), app.RequirementsEmbedding!.ToArray());
+                // Display heuristic, not a calibrated probability.
+                semanticScores[app.Id] = (int)Math.Round(Math.Clamp((sim - 0.3) / 0.6, 0, 1) * 100);
+            }
+        }
+
+        foreach (var group in links.GroupBy(l => l.ApplicationId))
+        {
+            ct.ThrowIfCancellationRequested();
+            var required = group.ToList();
 
             // Weight by importance: missing a must-have hurts more than
             // missing a nice-to-have. Weight 1..3 maps directly.
@@ -48,15 +71,7 @@ public class FitScorer(AppDbContext db) : IFitScorer
                                         .Sum(r => Math.Clamp(r.Importance, 1, 3));
             var skillMatch = (int)Math.Round(100.0 * matchedWeight / totalWeight);
 
-            int? semantic = null;
-            var resumeEmbedding = app.ResumeId.HasValue ? resumes.GetValueOrDefault(app.ResumeId.Value)?.Embedding : profile?.ResumeEmbedding;
-            if (resumeEmbedding is not null && app.RequirementsEmbedding is not null)
-            {
-                var sim = CosineSimilarity(resumeEmbedding.ToArray(), app.RequirementsEmbedding.ToArray());
-                // This fixed 0.3-0.9 rescaling is a display heuristic, not a
-                // calibrated probability or a guaranteed embedding distribution.
-                semantic = (int)Math.Round(Math.Clamp((sim - 0.3) / 0.6, 0, 1) * 100);
-            }
+            int? semantic = semanticScores.TryGetValue(group.Key, out var value) ? value : null;
 
             // Skill match dominates — it's explainable ("you're missing Docker").
             // Semantic is a supporting signal for things skills alone miss.
@@ -64,7 +79,7 @@ public class FitScorer(AppDbContext db) : IFitScorer
                 ? (int)Math.Round(skillMatch * 0.7 + semantic.Value * 0.3)
                 : skillMatch;
 
-            result[app.Id] = new FitBreakdown(
+            result[group.Key] = new FitBreakdown(
                 overall, skillMatch, semantic,
                 required.Count(r => mySkillIds.Contains(r.SkillId)), required.Count);
         }

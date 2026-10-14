@@ -17,7 +17,7 @@ public static class DeadlineService
             try {
                 using var fields = JsonDocument.Parse(stage.FieldsJson);
                 var key = stage.Stage switch { ApplicationStatus.AssessmentPending => "dueDate", ApplicationStatus.InterviewScheduled => "scheduledAt", ApplicationStatus.Offered => "deadline", _ => "" };
-                if (key == "" || !fields.RootElement.TryGetProperty(key, out var value) || value.ValueKind != JsonValueKind.String) continue;
+                if (key == "" || fields.RootElement.ValueKind != JsonValueKind.Object || !fields.RootElement.TryGetProperty(key, out var value) || value.ValueKind != JsonValueKind.String) continue;
                 var text = value.GetString()!;
                 DateTimeOffset deadline;
                 if (key == "scheduledAt") { if (!DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out deadline)) continue; }

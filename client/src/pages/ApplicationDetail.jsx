@@ -23,7 +23,7 @@ import {
 } from "../api/skills.js";
 import { listResumes } from "../api/resumes.js";
 import { STATUS_META, STATUS, statusMeta } from "../api/statusMeta.js";
-import { STAGE_FIELDS } from "../api/stageFields.js";
+import { STAGE_FIELDS, parseStageFields } from "../api/stageFields.js";
 import { pollRun } from "../api/polling.js";
 import { toInstant, toLocalInput } from "../api/datetime.js";
 import { useApplications } from "../state/ApplicationsContext.jsx";
@@ -32,6 +32,7 @@ import { notify } from "../notify.js";
 import { Icon } from "../components/Icon.jsx";
 import { progressMessage } from "../api/progress.js";
 import { eventLabel } from "../api/timelineMeta.js";
+import { ConnectionHelp } from "../components/ConnectionHelp.jsx";
 export function ApplicationDetail() {
   const { id } = useParams();
   return <Detail key={id} id={id} />;
@@ -142,6 +143,8 @@ function Detail({ id }) {
   const dirty = useRef(false);
   const [mySkills, setMySkills] = useState([]);
   const [resumes, setResumes] = useState([]);
+  const [resumesError, setResumesError] = useState("");
+  const resumesLoaded = useRef(false);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
@@ -149,8 +152,10 @@ function Detail({ id }) {
   const [questionStatus, setQuestionStatus] = useState(null);
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
+  const [skillsError, setSkillsError] = useState("");
   const mounted = useRef(true);
   const request = useRef(0);
+  const loadController = useRef(null);
   const accept = useCallback(
     (fresh) => {
       if (!mounted.current) return;
@@ -161,38 +166,75 @@ function Detail({ id }) {
   );
   const reload = useCallback(async () => {
     const seq = ++request.current;
-    const [fresh, skills] = await Promise.all([
-      getApplication(id),
-      getApplicationSkills(id),
-    ]);
-    if (!mounted.current || seq !== request.current) return;
-    accept(fresh);
-    if (!dirty.current) {
-      setRequired(skills);
-      setDraft(skills.skills);
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    const current = () =>
+      mounted.current && seq === request.current && !controller.signal.aborted;
+    // Skills enrich the page; they must not gate application details.
+    void getApplicationSkills(id, controller.signal)
+      .then((skills) => {
+        if (!current()) return;
+        setSkillsError("");
+        if (!dirty.current) {
+          setRequired(skills);
+          setDraft(skills.skills);
+        }
+      })
+      .catch((err) => {
+        if (current()) setSkillsError(extractErrorMessage(err));
+      });
+    try {
+      const fresh = await getApplication(id, controller.signal);
+      if (!current()) return;
+      accept(fresh);
+      setError("");
+    } catch (err) {
+      if (!current()) return;
+      setError(extractErrorMessage(err));
+      throw err;
     }
   }, [id, accept]);
   useEffect(() => {
     mounted.current = true;
-    void reload().catch((err) => {
-      if (mounted.current) setError(extractErrorMessage(err));
-    });
-    void getMySkills()
-      .then((data) => {
-        if (mounted.current) setMySkills(data);
+    const controller = new AbortController();
+    void Promise.resolve()
+      .then(() => {
+        if (!controller.signal.aborted) return reload();
       })
       .catch(() => {});
-    void listResumes()
+    void Promise.resolve()
+      .then(() => {
+        if (!controller.signal.aborted) return getMySkills(controller.signal);
+      })
       .then((data) => {
-        if (mounted.current) setResumes(data);
+        if (!controller.signal.aborted) setMySkills(data);
       })
       .catch(() => {});
     const dispose = () => {
       mounted.current = false;
+      controller.abort();
       request.current++;
+      loadController.current?.abort();
     };
     return dispose;
   }, [reload]);
+  useEffect(() => {
+    if (!editing || resumesLoaded.current) return;
+    const controller = new AbortController();
+    setResumesError("");
+    void listResumes(controller.signal)
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        setResumes(data);
+        resumesLoaded.current = true;
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted)
+          setResumesError(extractErrorMessage(err));
+      });
+    return () => controller.abort();
+  }, [editing]);
   const skillRunId = app?.extractionRunId;
   useEffect(() => {
     if (!skillRunId) return;
@@ -238,7 +280,7 @@ function Detail({ id }) {
       await action();
     } catch (err) {
       notify.error("Could not save", extractErrorMessage(err));
-      if (err.response?.status === 409) await reload();
+      if (err.response?.status === 409) await reload().catch(() => {});
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -255,6 +297,21 @@ function Detail({ id }) {
     return (
       <Layout title="Application">
         <p role={error ? "alert" : undefined}>{error || "Loading…"}</p>
+        {error && (
+          <>
+            <button
+              className="btn-primary"
+              onClick={() => {
+                setError("");
+                void reload().catch(() => {});
+              }}
+            >
+              Try again
+            </button>
+            <ConnectionHelp />
+          </>
+        )}
+        <Link to="/">All applications</Link>
       </Layout>
     );
   const mine = new Set(mySkills.map((s) => s.name));
@@ -266,7 +323,7 @@ function Detail({ id }) {
     defaultExpanded: record.stage === app.status,
     roundLabel:
       record.stage === STATUS.InterviewScheduled
-        ? "Round " + (JSON.parse(record.fieldsJson).round ?? "?")
+        ? "Round " + (parseStageFields(record.fieldsJson).round ?? "?")
         : null,
   }));
   if (
@@ -299,6 +356,7 @@ function Detail({ id }) {
         </Link>
       }
     >
+      {error && <p role="alert">Couldn’t refresh this application. {error}</p>}
       <section className="panel">
         <div className="detail-summary">
           <div>
@@ -362,6 +420,12 @@ function Detail({ id }) {
           </p>
         </details>
       </section>
+      {editing && resumesError && (
+        <p role="alert">
+          Resume choices couldn’t load. {resumesError} Close and reopen the
+          editor to retry.
+        </p>
+      )}
       {editing && (
         <ApplicationForm
           initial={app}
@@ -480,6 +544,25 @@ function Detail({ id }) {
         <aside className="detail-aside" aria-label="Skills and follow-up">
           <section className="panel">
             <h3>Your skill match</h3>
+            {skillsError ? (
+              <div role="alert">
+                <p>
+                  Job skills couldn’t load. You can still view and edit this
+                  application. {skillsError}
+                </p>
+                <button
+                  className="text-btn"
+                  onClick={() => {
+                    setSkillsError("");
+                    void reload().catch(() => {});
+                  }}
+                >
+                  Retry job skills
+                </button>
+              </div>
+            ) : (
+              !required && <p role="status">Loading job skills…</p>
+            )}
             {app.fit ? (
               <div className="fit-summary">
                 <span className="fit-score">{app.fit.overall}%</span>
@@ -497,34 +580,36 @@ function Detail({ id }) {
                 own.
               </p>
             )}
-            <div className="skill-summary">
-              <div>
-                <strong>In your skill set</strong>
-                <div className="skill-chips">
-                  {(required?.skills ?? [])
-                    .filter((skill) => mine.has(skill.name))
-                    .map((skill) => (
-                      <span key={skill.name}>{skill.name}</span>
-                    ))}
-                  {!(required?.skills ?? []).some((skill) =>
-                    mine.has(skill.name),
-                  ) && <span>No matches yet</span>}
+            {required && !skillsError && (
+              <div className="skill-summary">
+                <div>
+                  <strong>In your skill set</strong>
+                  <div className="skill-chips">
+                    {(required?.skills ?? [])
+                      .filter((skill) => mine.has(skill.name))
+                      .map((skill) => (
+                        <span key={skill.name}>{skill.name}</span>
+                      ))}
+                    {!(required?.skills ?? []).some((skill) =>
+                      mine.has(skill.name),
+                    ) && <span>No matches yet</span>}
+                  </div>
+                </div>
+                <div>
+                  <strong>Room to grow</strong>
+                  <div className="skill-chips missing">
+                    {(required?.skills ?? [])
+                      .filter((skill) => !mine.has(skill.name))
+                      .map((skill) => (
+                        <span key={skill.name}>{skill.name}</span>
+                      ))}
+                    {!(required?.skills ?? []).some(
+                      (skill) => !mine.has(skill.name),
+                    ) && <span>No missing skills recorded</span>}
+                  </div>
                 </div>
               </div>
-              <div>
-                <strong>Room to grow</strong>
-                <div className="skill-chips missing">
-                  {(required?.skills ?? [])
-                    .filter((skill) => !mine.has(skill.name))
-                    .map((skill) => (
-                      <span key={skill.name}>{skill.name}</span>
-                    ))}
-                  {!(required?.skills ?? []).some(
-                    (skill) => !mine.has(skill.name),
-                  ) && <span>No missing skills recorded</span>}
-                </div>
-              </div>
-            </div>
+            )}
             {status && (
               <p className="notice-info" role="status">
                 {progressMessage(status)}
@@ -543,7 +628,7 @@ function Detail({ id }) {
                     dirty.current = true;
                     setDraft(values);
                   }}
-                  disabled={busy}
+                  disabled={busy || Boolean(skillsError)}
                   onSave={() =>
                     void mutate(async () => {
                       const saved = await setApplicationSkills(

@@ -53,7 +53,7 @@ public class AutomationService(AppDbContext db, IConfiguration config, IHttpCont
 public sealed class AutomationDispatcher(AppDbContext db, IConfiguration config, IHttpClientFactory clients,
     ISupabaseStorageService storage, ILogger<AutomationDispatcher> logger)
 {
-    public async Task DispatchAsync(CancellationToken ct = default)
+    public async Task DispatchAsync(CancellationToken ct = default, bool runMaintenance = true)
     {
         var now = DateTimeOffset.UtcNow;
         var expired = await db.AutomationRuns.IgnoreQueryFilters()
@@ -113,7 +113,7 @@ public sealed class AutomationDispatcher(AppDbContext db, IConfiguration config,
         }
         await db.SaveChangesAsync(ct);
         var retention = now.AddDays(-30);
-        if (db.Database.IsNpgsql())
+        if (runMaintenance && db.Database.IsNpgsql())
             await db.AutomationRuns.IgnoreQueryFilters().Where(r => r.UpdatedAt < retention && (r.Status == "succeeded" || r.Status == "failed" || r.Status == "cancelled") &&
                 !db.Applications.IgnoreQueryFilters().Any(a => a.ExtractionRunId == r.Id) &&
                 !db.Resumes.IgnoreQueryFilters().Any(a => a.ExtractionRunId == r.Id) &&
@@ -151,17 +151,26 @@ public sealed class AutomationWorker(IServiceScopeFactory scopes, ILogger<Automa
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var failures = 0;
+        var nextMaintenance = DateTimeOffset.MinValue;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 using var scope = scopes.CreateScope();
-                await scope.ServiceProvider.GetRequiredService<AutomationDispatcher>().DispatchAsync(stoppingToken);
+                var maintenance = DateTimeOffset.UtcNow >= nextMaintenance;
+                await scope.ServiceProvider.GetRequiredService<AutomationDispatcher>().DispatchAsync(stoppingToken, maintenance);
+                if (maintenance) nextMaintenance = DateTimeOffset.UtcNow.AddHours(1);
+                failures = 0;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (Exception ex) { logger.LogError("Automation worker iteration failed ({ExceptionType})", ex.GetType().Name); }
-            try { await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken); }
+            catch (Exception ex) {
+                failures = Math.Min(failures + 1, 4);
+                logger.LogError(ex, "Automation worker iteration failed; retrying in {DelaySeconds} seconds", RetryDelay(failures).TotalSeconds);
+            }
+            try { await Task.Delay(RetryDelay(failures), stoppingToken); }
             catch (OperationCanceledException) { break; }
         }
     }
+    public static TimeSpan RetryDelay(int failures) => TimeSpan.FromSeconds(Math.Min(60, 5 * Math.Pow(2, Math.Clamp(failures, 0, 4))));
 }

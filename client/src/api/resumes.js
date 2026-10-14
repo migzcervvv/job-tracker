@@ -1,6 +1,6 @@
 import { api } from "./client.js";
-export async function listResumes() {
-  return (await api.get("/api/resumes")).data;
+export async function listResumes(signal) {
+  return (await api.get("/api/resumes", { signal })).data;
 }
 export async function uploadResume(file) {
   const form = new FormData();

@@ -39,17 +39,20 @@ public class ProfileController(UserManager<IdentityUser<Guid>> users, AppDbConte
     [HttpGet("preferences")]
     public async Task<IActionResult> Preferences()
     {
-        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == UserId);
+        var profile = await db.UserProfiles.AsNoTracking().Where(p => p.UserId == UserId)
+            .Select(p => new { p.RemindersEnabled, p.WeeklyDigestEnabled, p.TimeZone })
+            .FirstOrDefaultAsync(HttpContext.RequestAborted);
         return Ok(new { remindersEnabled = profile?.RemindersEnabled ?? false, weeklyDigestEnabled = profile?.WeeklyDigestEnabled ?? false, timeZone = profile?.TimeZone ?? "UTC", deliveryChannel = "email" });
     }
     [HttpPut("preferences")]
     public async Task<IActionResult> Preferences(PreferencesRequest req)
     {
         try { TimeZoneInfo.FindSystemTimeZoneById(req.TimeZone); } catch { return BadRequest("Unknown timezone."); }
-        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == UserId);
+        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == UserId, HttpContext.RequestAborted);
         if (profile == null) { profile = new UserProfile { UserId = UserId }; db.UserProfiles.Add(profile); }
         profile.RemindersEnabled = req.RemindersEnabled; profile.WeeklyDigestEnabled = req.WeeklyDigestEnabled; profile.TimeZone = req.TimeZone;
-        await db.SaveChangesAsync(); return await Preferences();
+        await db.SaveChangesAsync(HttpContext.RequestAborted);
+        return Ok(new { profile.RemindersEnabled, profile.WeeklyDigestEnabled, profile.TimeZone, deliveryChannel = "email" });
     }
 }
 public record UpdateProfileRequest(string Email);

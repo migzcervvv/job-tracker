@@ -34,10 +34,13 @@ builder.Services.AddHttpClient("n8n", c => c.Timeout = TimeSpan.FromSeconds(20))
 var connectionString = builder.Configuration.GetConnectionString("Default");
 var testDatabase = builder.Environment.IsEnvironment("Testing") ? builder.Configuration["Testing:Database"] : null;
 var testRoot = new Microsoft.EntityFrameworkCore.Storage.InMemoryDatabaseRoot();
-builder.Services.AddDbContext<IdentityStoreContext>(options =>
+if (testDatabase == null)
+    builder.Services.AddSingleton(_ => PostgresDataSource.Create(connectionString
+        ?? throw new InvalidOperationException("Configure ConnectionStrings:Default.")));
+builder.Services.AddDbContext<IdentityStoreContext>((sp, options) =>
 {
     if (testDatabase != null) options.UseInMemoryDatabase(testDatabase, testRoot).EnableServiceProviderCaching(false);
-    else options.UseNpgsql(connectionString);
+    else options.UseNpgsql(sp.GetRequiredService<Npgsql.NpgsqlDataSource>());
 });
 builder.Services.AddDbContext<AppDbContext>((sp, options) =>
 {
@@ -49,7 +52,7 @@ builder.Services.AddDbContext<AppDbContext>((sp, options) =>
         options.UseInMemoryDatabase("demo", sp.GetRequiredService<DemoSandboxStore>().GetRoot(session)).EnableServiceProviderCaching(false);
     }
     else if (testDatabase != null) options.UseInMemoryDatabase(testDatabase, testRoot).EnableServiceProviderCaching(false);
-    else options.UseNpgsql(connectionString, o => o.UseVector());
+    else options.UseNpgsql(sp.GetRequiredService<Npgsql.NpgsqlDataSource>(), o => o.UseVector());
 });
 builder.Services.AddIdentityCore<IdentityUser<Guid>>(options =>
 {
@@ -124,10 +127,16 @@ if (!builder.Environment.IsEnvironment("Testing"))
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
 app.Use(async (context, next) =>
 {
+    var started = System.Diagnostics.Stopwatch.GetTimestamp();
     context.Response.Headers.CacheControl = "no-store";
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["X-Request-Id"] = context.TraceIdentifier;
     try { await next(); }
+    catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+    {
+        // The browser disconnected or cancelled; do not turn this into a 500.
+        if (!context.Response.HasStarted) context.Response.StatusCode = 499;
+    }
     catch (DbUpdateConcurrencyException)
     { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { error = "This record changed. Reload before saving." }); }
     catch (Exception ex) when (ex is Npgsql.PostgresException { SqlState: "40001" or "40P01" or "23505" } || ex is DbUpdateException { InnerException: Npgsql.PostgresException { SqlState: "40001" or "40P01" or "23505" } })
@@ -136,7 +145,20 @@ app.Use(async (context, next) =>
     {
         app.Logger.LogError(ex, "Request {RequestId} failed: {Method} {Path} ({ExceptionType})",
             context.TraceIdentifier, context.Request.Method, context.Request.Path, ex.GetType().Name);
-        if (!context.Response.HasStarted) { context.Response.StatusCode = 500; await context.Response.WriteAsJsonAsync(new { error = "Internal server error", requestId = context.TraceIdentifier }); }
+        if (!context.Response.HasStarted)
+        {
+            var failure = RequestFailure.Classify(ex);
+            context.Response.StatusCode = failure.Status;
+            await context.Response.WriteAsJsonAsync(new { error = failure.Message, code = failure.Code, requestId = context.TraceIdentifier });
+        }
+    }
+    finally
+    {
+        var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+        if (elapsed.TotalSeconds >= 5)
+            app.Logger.LogWarning("Slow request {RequestId}: {Method} {Path} took {ElapsedMs} ms; status {StatusCode}; aborted {Aborted}",
+                context.TraceIdentifier, context.Request.Method, context.Request.Path,
+                (long)elapsed.TotalMilliseconds, context.Response.StatusCode, context.RequestAborted.IsCancellationRequested);
     }
 });
 app.UseForwardedHeaders();

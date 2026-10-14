@@ -1,20 +1,12 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { STATUS, statusMeta } from "../api/statusMeta.js";
-import { STAGE_FIELDS } from "../api/stageFields.js";
+import { STAGE_FIELDS, parseStageFields } from "../api/stageFields.js";
 import { relativeTime } from "../api/dates.js";
 import { dateOnlyLabel } from "../api/datetime.js";
 import { StageDetailForm } from "./StageDetailForm.jsx";
 
 const AI_QUESTIONS_MARKER = "--- Suggested questions ---";
-
-function parseFields(fieldsJson) {
-  try {
-    return JSON.parse(fieldsJson) ?? {};
-  } catch {
-    return {};
-  }
-}
 
 // Splits prepNotes into whatever the user typed themselves and whatever
 // n8n appended. InternalController writes the marker verbatim every time
@@ -197,7 +189,7 @@ export function StageAccordion({
   const [mode, setMode] = useState(entry.record ? "view" : "edit");
 
   const meta = statusMeta(entry.stage);
-  const fields = entry.record ? parseFields(entry.record.fieldsJson) : {};
+  const fields = entry.record ? parseStageFields(entry.record.fieldsJson) : {};
   const isInterview = entry.stage === STATUS.InterviewScheduled;
 
   function handleSaved(saved) {

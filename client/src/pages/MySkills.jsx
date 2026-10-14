@@ -11,7 +11,7 @@ import { extractErrorMessage } from "../api/errors.js";
 import { useApplications } from "../state/ApplicationsContext.jsx";
 
 export function MySkills() {
-  const { refresh: refreshApplications } = useApplications();
+  const { invalidate } = useApplications();
   const [skills, setSkills] = useState(null);
   const [error, setError] = useState("");
 
@@ -41,10 +41,9 @@ export function MySkills() {
     };
   }, [skills]);
 
-  // Adding or removing skills refreshes match scores. Proficiency ratings
-  // save independently and do not change the match calculation.
+  // Recompute scores when the board is next opened.
   function refreshFitScores() {
-    refreshApplications().catch(() => {});
+    invalidate();
   }
 
   async function handleAdd(name) {

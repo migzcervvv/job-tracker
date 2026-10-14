@@ -47,3 +47,13 @@ export const STAGE_FIELDS = {
   ],
   // Withdrawn / Archived: no fields defined in the build guide — no form rendered.
 };
+export function parseStageFields(json) {
+  try {
+    const fields = JSON.parse(json);
+    return fields && typeof fields === "object" && !Array.isArray(fields)
+      ? fields
+      : {};
+  } catch {
+    return {};
+  }
+}

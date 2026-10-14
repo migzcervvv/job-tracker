@@ -46,6 +46,33 @@ beforeEach(() => {
   mergeSkills.mockReset();
 });
 
+it("shows account details without waiting for reminders and cancels abandoned requests", async () => {
+  getProfile.mockResolvedValue({ email: "member@example.test", role: "user" });
+  api.get.mockReturnValue(new Promise(() => {}));
+  const view = render(<Profile />);
+  await screen.findByDisplayValue("member@example.test");
+  view.unmount();
+  expect(api.get.mock.calls[0][1].signal.aborted).toBe(true);
+});
+
+it("explains malformed account responses and database failures with a request reference", async () => {
+  getProfile.mockResolvedValue({});
+  api.get.mockRejectedValue({
+    response: {
+      status: 503,
+      data: { code: "database_schema_outdated", requestId: "req-123" },
+    },
+  });
+  render(<Profile />);
+  await screen.findByText(
+    /Account details: The server returned incomplete settings/,
+  );
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "database migrations",
+  );
+  expect(screen.getByRole("alert").textContent).toContain("req-123");
+});
+
 it("shows account details even if preferences fail and retries the failed load", async () => {
   getProfile.mockResolvedValue({ email: "member@example.test", role: "user" });
   api.get

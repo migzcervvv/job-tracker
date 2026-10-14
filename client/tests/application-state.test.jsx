@@ -1,5 +1,11 @@
 import { StrictMode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import {
   ApplicationsProvider,
@@ -38,6 +44,32 @@ it("does not show duplicate notifications from StrictMode's disposed request", a
     </StrictMode>,
   );
   await waitFor(() => expect(notify.error).toHaveBeenCalledTimes(1));
+  expect(listApplications).toHaveBeenCalledTimes(1);
+});
+
+it("does not load the board on unrelated pages and cancels when leaving it", async () => {
+  listApplications.mockReturnValue(new Promise(() => {}));
+  const view = render(
+    <ApplicationsProvider enabled={false}>
+      <Consumer />
+    </ApplicationsProvider>,
+  );
+  await act(async () => {});
+  expect(listApplications).not.toHaveBeenCalled();
+  view.rerender(
+    <ApplicationsProvider enabled>
+      <Consumer />
+    </ApplicationsProvider>,
+  );
+  await waitFor(() => expect(listApplications).toHaveBeenCalledTimes(1));
+  const signal = listApplications.mock.calls[0][0];
+  expect(signal.aborted).toBe(false);
+  view.rerender(
+    <ApplicationsProvider enabled={false}>
+      <Consumer />
+    </ApplicationsProvider>,
+  );
+  expect(signal.aborted).toBe(true);
 });
 
 it("exposes a useful failure reason and clears it after a successful retry", async () => {

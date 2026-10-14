@@ -15,25 +15,37 @@ import { pollRun } from "../api/polling.js";
 import { extractErrorMessage } from "../api/errors.js";
 import { notify } from "../notify.js";
 const ApplicationsContext = createContext(null);
-export function ApplicationsProvider({ children }) {
+export function ApplicationsProvider({ children, enabled = true }) {
   const [applications, setApplications] = useState(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [loadError, setLoadError] = useState("");
   const polls = useRef(new Map());
   const mounted = useRef(true);
   const revision = useRef(0);
+  const loadController = useRef(null);
   const refresh = useCallback(async () => {
     const request = ++revision.current;
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
     try {
-      const data = await listApplications();
-      if (mounted.current && request === revision.current) {
+      const data = await listApplications(controller.signal);
+      if (
+        mounted.current &&
+        request === revision.current &&
+        !controller.signal.aborted
+      ) {
         setApplications(data);
         setLoadFailed(false);
         setLoadError("");
       }
       return data;
     } catch (err) {
-      if (mounted.current && request === revision.current) {
+      if (
+        mounted.current &&
+        request === revision.current &&
+        !controller.signal.aborted
+      ) {
         setLoadFailed(true);
         setLoadError(extractErrorMessage(err));
       }
@@ -47,33 +59,56 @@ export function ApplicationsProvider({ children }) {
         prev?.map((a) => (a.id === id ? { ...a, ...patch } : a)) ?? prev,
     );
   }, []);
+  const invalidate = useCallback(() => {
+    revision.current++;
+    loadController.current?.abort();
+    setApplications(null);
+  }, []);
   useEffect(() => {
-    let active = true;
     mounted.current = true;
-    void refresh().catch((err) => {
-      if (active)
-        notify.error(
-          "Couldn’t load your applications",
-          extractErrorMessage(err),
-        );
-    });
     const activePolls = polls.current;
     // Lifecycle counters intentionally change during cleanup; these refs are not DOM nodes.
     const dispose = () => {
-      active = false;
       mounted.current = false;
       revision.current++;
+      loadController.current?.abort();
       activePolls.forEach((stop) => stop());
       activePolls.clear();
     };
     return dispose;
-  }, [refresh]);
+  }, []);
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    // Deferring avoids issuing the discarded StrictMode mount's request.
+    void Promise.resolve().then(async () => {
+      if (!active) return;
+      try {
+        await refresh();
+      } catch (err) {
+        if (
+          active &&
+          err?.code !== "ERR_CANCELED" &&
+          err?.name !== "AbortError"
+        )
+          notify.error(
+            "Couldn’t load your applications",
+            extractErrorMessage(err),
+          );
+      }
+    });
+    return () => {
+      active = false;
+      loadController.current?.abort();
+    };
+  }, [enabled, refresh]);
   function addApplication(app) {
     revision.current++;
-    setApplications((prev) => [
-      app,
-      ...(prev ?? []).filter((a) => a.id !== app.id),
-    ]);
+    setApplications((prev) =>
+      prev === null
+        ? null
+        : [app, ...(prev ?? []).filter((a) => a.id !== app.id)],
+    );
   }
   function removeApplication(id) {
     revision.current++;
@@ -108,6 +143,7 @@ export function ApplicationsProvider({ children }) {
         loadFailed,
         loadError,
         refresh,
+        invalidate,
         addApplication,
         updateApplication,
         removeApplication,

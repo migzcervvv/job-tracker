@@ -6,6 +6,12 @@ The frontend runs from VS Code with Vite and deploys to Netlify. The backend run
 
 During local development, `client/.env.local` sets `VITE_API_URL` to the backend origin without `/api`. The HTTPS Visual Studio profile uses `https://localhost:7179`; HTTP uses `http://localhost:5233`; IIS Express uses `https://localhost:44393` or `http://localhost:45635`. The selected profile must be running. Restart Vite after changing this setting.
 
+Production builds previewed on localhost also use the configured backend origin. Vite embeds environment values at build time, so rebuild before previewing a changed URL. Hosted production builds continue to use the Netlify proxy.
+
+Vite development requests allow 120 seconds for Visual Studio debugging. `VITE_API_TIMEOUT_MS` in `client/.env.local` can set 1,000–600,000 milliseconds for development; restart Vite after changing it. Production builds retain the 15-second timeout. The browser timer continues while a backend breakpoint is paused. Measure real performance with breakpoints disabled or Visual Studio's **Start Without Debugging** (Ctrl+F5).
+
+Requests taking five seconds or longer log method, path, request ID, elapsed milliseconds and cancellation in the backend output. An awaited `ScoreAsync` line alone does not identify which database command is slow. In Visual Studio user secrets, set `Logging:LogLevel:Microsoft.EntityFrameworkCore.Database.Command` to `Information` temporarily to see individual command durations; do not enable sensitive-data logging. Application creation only queues automation and does not wait for n8n or fit scoring. A slow create request must be traced through authentication and database work separately. Cancellation stops outstanding application queries when the client disconnects; a timeout after a committed write can still mean the save succeeded, so the create form retains its request ID for safe retries.
+
 Production builds use same-origin `/api` requests. `client/public/_redirects` forwards `/api/*` to `https://jtrackerch.runasp.net/api/:splat` before the SPA fallback. This rule is copied into `dist` by Vite. A stale Netlify `VITE_API_URL` no longer changes production API routing. To change the hosted API, update that proxy rule. Netlify proxy behavior is documented in [Rewrites and proxies](https://docs.netlify.com/manage/routing/redirects/rewrites-proxies/).
 
 Deploy both backend and frontend for the skill-context endpoint and duplicate checks. Redeploy Netlify to publish the routing file, then hard-refresh the browser. Verify `/api/health/ready` on the Netlify hostname returns JSON, then sign in and test application creation, detail, and Account settings. A backend health response alone does not verify an authenticated user request. Error screens now include expandable connection details with the address in use.
@@ -62,6 +68,12 @@ A code rollback keeps additive schema changes unless a separately reviewed resto
 Previously exposed credentials require rotation through their providers, followed by coordinated history cleanup. Existing orphaned storage objects require reconciliation against persisted Resume.StoragePath values before deletion. These external actions have not been performed.
 
 ## Monitoring
+
+An `InvalidCastException` reading `System.Object` from `public.vector` indicates missing Npgsql vector type registration, rather than a missing migration. Runtime identity and application contexts share the singleton data source built by `PostgresDataSource.Create`, which calls Npgsql's `UseVector()` before creating the pool. The application context also enables EF's `UseVector()`. Restart the API after deploying this configuration change so all connections use the configured data source.
+
+Account and detail errors include the HTTP status and a request reference when the backend supplies one. Match that reference to `RequestId` in server logs. `database_schema_outdated` means a required table, column, or function is absent; verify and apply the deployment's migrations. `database_unavailable` means a transient database connection or timeout failure. Unexpected failures retain a generic public message; exception details stay in server logs.
+
+The board loads only on the dashboard. Requests are cancelled when those pages are left, and resume choices load when the application editor opens. Resume list polling runs only while extraction is active outside the open review. Failed polling stops until an explicit retry. Skill and resume changes invalidate board scores for the next dashboard visit. The automation worker backs off from 10 to 60 seconds after consecutive failures and resets to five seconds after recovery. Retention cleanup runs hourly.
 
 `/api/health/live` is process liveness. `/api/health/ready` checks the database and pending migrations. `/api/health/n8n` reports workflow health. Workflow outages display a nonblocking banner.
 

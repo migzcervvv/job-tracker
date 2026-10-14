@@ -21,7 +21,8 @@ public class PostgresIntegrationTests
         await using (var extension = new NpgsqlCommand("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public", admin)) await extension.ExecuteNonQueryAsync();
         await using (var command = new NpgsqlCommand($"CREATE SCHEMA \"{schema}\"", admin)) await command.ExecuteNonQueryAsync();
         connection.SearchPath = schema + ",public";
-        var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(connection.ConnectionString, o => {
+        await using var dataSource = PostgresDataSource.Create(connection.ConnectionString);
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(dataSource, o => {
             o.UseVector();
             o.MigrationsHistoryTable("__EFMigrationsHistory", schema);
         }).Options;
@@ -31,7 +32,31 @@ public class PostgresIntegrationTests
             await using var db = new AppDbContext(options, new FakeCurrentUser(owner)); await db.Database.MigrateAsync();
             Assert.Empty(await db.Database.GetPendingMigrationsAsync());
             var app = new Application { Id = Guid.NewGuid(), UserId = owner, Title = "Vector test", RequirementsEmbedding = new Vector(Enumerable.Repeat(1f, 1536).ToArray()) };
+            app.StageDetails.Add(new StageDetail { Id = Guid.NewGuid(), Stage = ApplicationStatus.Applied, FieldsJson = "{}" });
+            app.TimelineEvents.Add(new TimelineEvent { Id = Guid.NewGuid(), Type = "created", Body = "Vector fixture" });
             db.Applications.Add(app); await db.SaveChangesAsync();
+            // Authentication initializes the identity connection before details.
+            // Both contexts must use the explicitly configured vector data source.
+            await using (var identity = new IdentityStoreContext(new DbContextOptionsBuilder<IdentityStoreContext>().UseNpgsql(dataSource).Options))
+                await identity.Users.AsNoTracking().Take(1).ToListAsync();
+            await using (var buffered = new AppDbContext(options, new FakeCurrentUser(owner)))
+            {
+                var detail = await buffered.Applications.AsNoTracking().AsSplitQuery()
+                    .Include(a => a.TimelineEvents).Include(a => a.StageDetails).SingleAsync(a => a.Id == app.Id);
+                Assert.Equal(1536, detail.RequirementsEmbedding!.ToArray().Length);
+                Assert.Single(detail.StageDetails); Assert.Single(detail.TimelineEvents);
+            }
+            await using (var vectorConnection = await dataSource.OpenConnectionAsync())
+            await using (var command = new NpgsqlCommand("SELECT NULL::public.vector, ARRAY[1,2,3]::public.vector", vectorConnection))
+            await using (var reader = await command.ExecuteReaderAsync())
+            {
+                Assert.Equal(typeof(Vector), reader.GetFieldType(0));
+                Assert.Equal(typeof(Vector), reader.GetFieldType(1));
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(DBNull.Value, reader.GetValue(0));
+                Assert.Equal(new float[] { 1, 2, 3 }, Assert.IsType<Vector>(reader.GetValue(1)).ToArray());
+            }
+            Assert.Empty(await new FitScorer(db).ScoreAsync(owner, [app.Id]));
             await using var second = new AppDbContext(options, new FakeCurrentUser(owner)); var stale = await second.Applications.SingleAsync();
             app.Title = "Newer"; app.Version = Guid.NewGuid(); await db.SaveChangesAsync();
             stale.Title = "Lost update"; stale.Version = Guid.NewGuid(); await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => second.SaveChangesAsync());
@@ -42,6 +67,20 @@ public class PostgresIntegrationTests
             Assert.Equal(1, await verify.Skills.CountAsync(s => s.Name == "docker"));
             db.ApplicationSkills.Add(new ApplicationSkill { ApplicationId = app.Id, SkillId = resolutions[0].Single().Id, Importance = 3 });
             await db.SaveChangesAsync(); Assert.Single(await verify.ApplicationSkills.ToListAsync());
+            db.UserSkills.Add(new UserSkill { UserId = owner, SkillId = resolutions[0].Single().Id });
+            db.UserProfiles.Add(new UserProfile { UserId = owner, ResumeEmbedding = new Vector(Enumerable.Repeat(1f, 1536).ToArray()) });
+            await db.SaveChangesAsync();
+            var scorer = new FitScorer(db);
+            Assert.Equal(100, (await scorer.ScoreAsync(owner, [app.Id]))[app.Id].Semantic);
+            var resume = new Resume { Id = Guid.NewGuid(), UserId = owner, Embedding = new Vector(Enumerable.Repeat(-1f, 1536).ToArray()) };
+            db.Resumes.Add(resume); app.ResumeId = resume.Id;
+            await db.SaveChangesAsync();
+            var explicitResumeScore = (await scorer.ScoreAsync(owner, [app.Id]))[app.Id];
+            Assert.Equal(0, explicitResumeScore.Semantic);
+            Assert.Equal(70, explicitResumeScore.Overall);
+            app.RequirementsEmbedding = null; await db.SaveChangesAsync();
+            var keywordScore = (await scorer.ScoreAsync(owner, [app.Id]))[app.Id];
+            Assert.Null(keywordScore.Semantic); Assert.Equal(100, keywordScore.Overall);
             db.Applications.Remove(app); await db.SaveChangesAsync(); Assert.Empty(await verify.ApplicationSkills.ToListAsync());
         }
         finally { await using var cleanup = new NpgsqlCommand($"DROP SCHEMA \"{schema}\" CASCADE", admin); await cleanup.ExecuteNonQueryAsync(); }

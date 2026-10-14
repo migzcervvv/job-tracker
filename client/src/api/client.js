@@ -1,14 +1,17 @@
 import axios from "axios";
 import { AUTH_STORAGE_KEY } from "../auth/constants.js";
 import { notify } from "../notify.js";
-import { resolveApiBaseUrl } from "./config.js";
+import { resolveApiBaseUrl, resolveApiTimeout } from "./config.js";
 
 export const api = axios.create({
   baseURL: resolveApiBaseUrl(
     import.meta.env.VITE_API_URL,
     import.meta.env.PROD,
   ),
-  timeout: 15000,
+  timeout: resolveApiTimeout(
+    import.meta.env.VITE_API_TIMEOUT_MS,
+    import.meta.env.DEV,
+  ),
 });
 
 api.interceptors.request.use((config) => {

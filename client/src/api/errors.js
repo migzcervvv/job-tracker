@@ -43,6 +43,8 @@ export function extractErrorMessage(err, fallback = DEFAULT_MESSAGE) {
     return "The website received a page instead of application data. The frontend API address needs to point to the backend.";
   if (err?.code === "INVALID_APPLICATION_LIST")
     return "The server returned an unexpected application list. Check that the frontend and backend deployments are up to date.";
+  if (err?.code === "INVALID_APPLICATION_DETAIL")
+    return "The server returned incomplete application details. Check that the frontend and backend deployments are up to date.";
   const status = err?.response?.status;
   if (err?.code === "ECONNABORTED" || err?.code === "ETIMEDOUT")
     return "The request took too long. Check your connection and try again.";
@@ -62,8 +64,28 @@ export function extractErrorMessage(err, fallback = DEFAULT_MESSAGE) {
     return "This file is too large. Choose a smaller file and try again.";
   if (status === 429)
     return "Too many attempts. Wait a moment before trying again.";
-  if (status >= 500)
-    return "We couldn’t complete that request right now. Please try again in a moment.";
+  if (status >= 500) {
+    const reasons = {
+      database_schema_outdated:
+        "The server database is missing a required update. The server administrator needs to apply the database migrations.",
+      database_unavailable:
+        "The server cannot reach its database right now. Try again in a moment.",
+    };
+    const reason =
+      reasons[err?.response?.data?.code] ??
+      (status === 502 || status === 504
+        ? "The website could not get a response from the backend server."
+        : "The server could not complete this request.");
+    const requestId =
+      err?.response?.data?.requestId ??
+      err?.response?.headers?.["x-request-id"];
+    const reference =
+      typeof requestId === "string" &&
+      /^[a-zA-Z0-9:._-]{1,100}$/.test(requestId)
+        ? ` Reference: ${requestId}.`
+        : "";
+    return `${reason} (HTTP ${status}).${reference}`;
+  }
   const data = err?.response?.data;
   const messages = Array.isArray(data)
     ? data

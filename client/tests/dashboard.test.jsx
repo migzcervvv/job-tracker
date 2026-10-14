@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Routes, Route, useParams } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import { Dashboard } from "../src/pages/Dashboard.jsx";
 import { ThemeProvider } from "../src/theme/ThemeProvider.jsx";
@@ -54,6 +54,40 @@ const apps = [
 ];
 const update = vi.fn();
 const refresh = vi.fn();
+function OpenedApplication() {
+  const { id } = useParams();
+  return <h1>Opened application {id}</h1>;
+}
+it.each(["list", "board"])(
+  "opens the correct application from the %s",
+  async (view) => {
+    render(
+      <MemoryRouter>
+        <ThemeProvider>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/applications/:id" element={<OpenedApplication />} />
+          </Routes>
+        </ThemeProvider>
+      </MemoryRouter>,
+    );
+    if (view === "board") {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Board", exact: true }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Open Platform Engineer at Northstar",
+        }),
+      );
+    } else {
+      fireEvent.click(
+        screen.getByRole("link", { name: "Platform Engineer", exact: true }),
+      );
+    }
+    await screen.findByRole("heading", { name: "Opened application active" });
+  },
+);
 beforeEach(() => {
   vi.clearAllMocks();
   refresh.mockResolvedValue([]);

@@ -15,41 +15,57 @@ import { useApplications } from "../state/ApplicationsContext.jsx";
 import { progressLabel } from "../api/progress.js";
 import { Icon } from "../components/Icon.jsx";
 export function ResumeManager() {
-  const { refresh } = useApplications();
+  const { invalidate } = useApplications();
   const [resumes, setResumes] = useState([]);
   const [review, setReview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const load = useCallback(async () => setResumes(await listResumes()), []);
+  const [revision, setRevision] = useState(0);
+  const load = useCallback(async (signal) => {
+    const rows = await listResumes(signal);
+    if (signal?.aborted) return;
+    setResumes(rows);
+    setLoaded(true);
+    setLoadError("");
+  }, []);
   useEffect(() => {
-    let cancelled = false;
-    let timer;
-    async function check() {
-      try {
-        const rows = await listResumes();
-        if (!cancelled) {
-          setResumes(rows);
-          setLoaded(true);
-          setLoadError("");
-        }
-      } catch (err) {
-        if (!cancelled) setLoadError(extractErrorMessage(err));
-      }
-      if (!cancelled) timer = setTimeout(check, 10000);
-    }
-    void check();
+    const controller = new AbortController();
+    void Promise.resolve()
+      .then(() => {
+        if (!controller.signal.aborted) return load(controller.signal);
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) setLoadError(extractErrorMessage(err));
+      });
+    return () => controller.abort();
+  }, [load, revision]);
+  const pending = resumes.some(
+    (resume) =>
+      resume.id !== review?.id &&
+      ["queued", "dispatching", "dispatched", "running"].includes(
+        resume.extractionStatus,
+      ),
+  );
+  useEffect(() => {
+    if (!pending || loadError) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      void load(controller.signal).catch((err) => {
+        if (!controller.signal.aborted) setLoadError(extractErrorMessage(err));
+      });
+    }, 10000);
     return () => {
-      cancelled = true;
+      controller.abort();
       clearTimeout(timer);
     };
-  }, []);
+  }, [pending, resumes, load, loadError]);
   async function mutate(action) {
     setBusy(true);
     try {
       await action();
+      invalidate();
       await load();
-      await refresh();
     } catch (err) {
       notify.error("Couldn’t update your resume", extractErrorMessage(err));
     } finally {
@@ -83,7 +99,18 @@ export function ResumeManager() {
           setReview(resume);
         }}
       />
-      {loadError && <p role="alert">{loadError}</p>}
+      {loadError && (
+        <div role="alert">
+          <p>{loadError}</p>
+          <button
+            onClick={() => {
+              setRevision((value) => value + 1);
+            }}
+          >
+            Retry resumes
+          </button>
+        </div>
+      )}
       {!loaded && !loadError && <p role="status">Loading your resumes…</p>}
       {loaded && !resumes.length && (
         <div className="panel empty-state">
@@ -150,7 +177,7 @@ export function ResumeManager() {
           setReview(null);
           void load().catch(() => {});
         }}
-        onSkillsConfirmed={() => void refresh().catch(() => {})}
+        onSkillsConfirmed={invalidate}
       />
     </Layout>
   );

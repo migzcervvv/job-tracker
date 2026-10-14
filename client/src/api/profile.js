@@ -1,7 +1,7 @@
 import { api } from "./client.js";
 
-export async function getProfile() {
-  const { data } = await api.get("/api/me");
+export async function getProfile(signal) {
+  const { data } = await api.get("/api/me", { signal });
   return data;
 }
 

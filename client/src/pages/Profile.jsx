@@ -18,7 +18,7 @@ export function Profile() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
-  const [loadErrors, setLoadErrors] = useState([]);
+  const [loadErrors, setLoadErrors] = useState({});
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
   const accountLoaded = useRef(false);
@@ -33,46 +33,62 @@ export function Profile() {
     ]),
   ]);
   useEffect(() => {
-    let cancelled = false;
-    void Promise.allSettled([
-      accountLoaded.current ? Promise.resolve(null) : getProfile(),
-      preferencesLoaded.current
-        ? Promise.resolve(null)
-        : api.get("/api/me/preferences"),
-    ]).then(([account, prefs]) => {
-      if (cancelled) return;
-      const errors = [];
-      if (!accountLoaded.current) {
-        if (
-          account.status === "fulfilled" &&
-          typeof account.value?.email === "string"
-        ) {
-          setProfile(account.value);
-          setEmail(account.value.email);
-          accountLoaded.current = true;
-        } else
-          errors.push(
-            "Account details: " + extractErrorMessage(account.reason),
-          );
+    const controller = new AbortController();
+    const { signal } = controller;
+    async function load(key, loaded, fetch, valid, accept) {
+      if (loaded.current || signal.aborted) return;
+      try {
+        const data = await fetch();
+        if (signal.aborted) return;
+        if (!valid(data)) {
+          setLoadErrors((prev) => ({
+            ...prev,
+            [key]: `${key}: The server returned incomplete settings. Check that the frontend and backend deployments are up to date.`,
+          }));
+          return;
+        }
+        accept(data);
+        loaded.current = true;
+        setLoadErrors((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+      } catch (err) {
+        if (!signal.aborted)
+          setLoadErrors((prev) => ({
+            ...prev,
+            [key]: `${key}: ${extractErrorMessage(err)}`,
+          }));
       }
-      if (!preferencesLoaded.current) {
-        if (
-          prefs.status === "fulfilled" &&
-          typeof prefs.value?.data?.timeZone === "string"
-        ) {
-          setPreferences(prefs.value.data);
-          preferencesLoaded.current = true;
-        } else
-          errors.push(
-            "Reminder settings: " + extractErrorMessage(prefs.reason),
-          );
-      }
-      setLoadErrors(errors);
-      setLoading(false);
+    }
+    void Promise.resolve().then(async () => {
+      if (signal.aborted) return;
+      await Promise.all([
+        load(
+          "Account details",
+          accountLoaded,
+          () => getProfile(signal),
+          (data) => typeof data?.email === "string",
+          (data) => {
+            setProfile(data);
+            setEmail(data.email);
+          },
+        ),
+        load(
+          "Reminder settings",
+          preferencesLoaded,
+          async () => (await api.get("/api/me/preferences", { signal })).data,
+          (data) =>
+            typeof data?.timeZone === "string" &&
+            typeof data?.remindersEnabled === "boolean" &&
+            typeof data?.weeklyDigestEnabled === "boolean",
+          setPreferences,
+        ),
+      ]);
+      if (!signal.aborted) setLoading(false);
     });
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [revision]);
   async function save(event, action, success) {
     event.preventDefault();
@@ -92,10 +108,10 @@ export function Profile() {
   const demo = user.role === "test";
   return (
     <Layout title="Account settings">
-      {loadErrors.length > 0 && (
+      {Object.keys(loadErrors).length > 0 && (
         <section className="notice-error" role="alert">
           <h3>Some account settings couldn’t load</h3>
-          {loadErrors.map((text) => (
+          {Object.values(loadErrors).map((text) => (
             <p key={text}>{text}</p>
           ))}
           <button
