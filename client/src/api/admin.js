@@ -48,6 +48,10 @@ export async function mergeSkills(sourceSkillId, targetSkillId) {
   return data;
 }
 
+export async function getSkillDetails(id) {
+  return (await api.get(`/api/admin/skills/${id}`)).data;
+}
+
 export async function createUserAdmin(email, password, role) {
   const { data } = await api.post("/api/admin/users", {
     email,

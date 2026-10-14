@@ -36,7 +36,7 @@ The database test refuses remote hosts and production database names. CI install
 
 ## Deployment
 
-Netlify builds the `client` project with `npm run build` and publishes `client/dist` (or `dist` when the configured base directory is `client`). Netlify's `VITE_API_URL` points to the HTTPS MonsterASP API origin. These frontend values are public build-time configuration, never private API credentials.
+Netlify builds the `client` project with `npm run build` and publishes `client/dist` (or `dist` when the configured base directory is `client`). Production requests use `/api` on the Netlify hostname; `client/public/_redirects` proxies them to MonsterASP before the frontend fallback. `VITE_API_URL` configures local development; it does not override production routing. Private API credentials stay on the backend.
 
 The API retains its MonsterASP WebDeploy publish profile. Visual Studio Publish remains available. GitHub deployment also verifies the revision, applies migrations, publishes, and checks readiness. Pushes to `main` trigger that workflow. Runtime backend settings remain on MonsterASP. [Operations and recovery](docs/operations.md).
 

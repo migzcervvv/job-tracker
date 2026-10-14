@@ -25,7 +25,14 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    if (typeof res.data === "string" && /<!doctype|<html/i.test(res.data)) {
+      const error = new Error("The backend request returned a website page.");
+      error.code = "API_RETURNED_HTML";
+      throw error;
+    }
+    return res;
+  },
   (err) => {
     if (err.response?.status === 401) {
       const wasSignedIn = Boolean(localStorage.getItem(AUTH_STORAGE_KEY));

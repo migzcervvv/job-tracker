@@ -1,6 +1,12 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { listSkillsAdmin } from "../api/admin.js";
-export function SkillPicker({ label, value, onChange, excludeId }) {
+export function SkillPicker({
+  label,
+  value,
+  onChange,
+  excludeId,
+  disabled = false,
+}) {
   const id = useId();
   const [input, setInput] = useState("");
   const query = value?.name ?? input;
@@ -38,6 +44,7 @@ export function SkillPicker({ label, value, onChange, excludeId }) {
       <label htmlFor={id}>{label}</label>
       <input
         id={id}
+        disabled={disabled}
         value={query}
         onFocus={() => setOpen(true)}
         onChange={(event) => {
@@ -47,7 +54,7 @@ export function SkillPicker({ label, value, onChange, excludeId }) {
         }}
         placeholder="Search skills"
       />
-      {open && (
+      {open && !disabled && (
         <div className="skill-picker-menu">
           {!results.length && (
             <div className="skill-picker-empty">No matches</div>

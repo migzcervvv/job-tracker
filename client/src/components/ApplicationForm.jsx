@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
+import { ConnectionHelp } from "./ConnectionHelp.jsx";
 import { useVersionedDraft } from "../hooks/useVersionedDraft.js";
 import { STATUS_META } from "../api/statusMeta.js";
 import { toInstant, toLocalInput } from "../api/datetime.js";
@@ -28,10 +30,12 @@ export function ApplicationForm({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [duplicates, setDuplicates] = useState(null);
   function change(key, value) {
+    setDuplicates(null);
     setFields((prev) => ({ ...prev, [key]: value }));
   }
-  async function submit(event) {
+  async function submit(event, allowDuplicate = false) {
     event.preventDefault();
     setBusy(true);
     setError("");
@@ -41,10 +45,15 @@ export function ApplicationForm({
           ...fields,
           appliedDate: toInstant(fields.appliedDate),
           resumeId: fields.resumeId || null,
+          ...(allowDuplicate ? { allowDuplicate: true } : {}),
         },
         version,
       );
     } catch (err) {
+      if (err?.response?.data?.code === "application_duplicate") {
+        setDuplicates(err.response.data);
+        return;
+      }
       setError(
         extractErrorMessage(
           err,
@@ -181,10 +190,45 @@ export function ApplicationForm({
           disabled={busy}
         />
       </div>
+      {duplicates && (
+        <section className="notice-info duplicate-review" role="alert">
+          <h3>This may already be in your applications</h3>
+          <p>
+            The company and job title match. These descriptions meet the{" "}
+            {duplicates.threshold}% similarity threshold; similarity is a text
+            comparison, not proof that the roles are identical.
+          </p>
+          <ul>
+            {duplicates.matches.map((match) => (
+              <li key={match.id}>
+                <Link to={`/applications/${match.id}`}>
+                  {match.title} at {match.company}
+                </Link>{" "}
+                — {match.descriptionSimilarity}% description match
+              </li>
+            ))}
+          </ul>
+          <p>
+            Open the existing application above, or save a separate application
+            if this is a different opportunity.
+          </p>
+          <button
+            type="button"
+            className="icon-btn"
+            disabled={busy}
+            onClick={(event) => void submit(event, true)}
+          >
+            Save as a separate application
+          </button>
+        </section>
+      )}
       {error && (
-        <p className="error-line" role="alert">
-          {error}
-        </p>
+        <div>
+          <p className="error-line" role="alert">
+            {error}
+          </p>
+          <ConnectionHelp />
+        </div>
       )}
       <div className="form-footer">
         {onCancel && (

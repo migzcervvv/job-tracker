@@ -118,8 +118,48 @@ public class AdminController(AppDbContext db, IdentityStoreContext identity, Use
         if (!string.IsNullOrWhiteSpace(search)) { var term = search.Trim().ToLower(); query = query.Where(s => s.Name.Contains(term)); }
         var totalCount = await query.CountAsync();
         var items = await query.OrderBy(s => s.Name).Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(s => new { s.Id, s.Name, applicationUsage = db.ApplicationSkills.IgnoreQueryFilters().Count(l => l.SkillId == s.Id), userUsage = db.UserSkills.IgnoreQueryFilters().Count(l => l.SkillId == s.Id) }).ToListAsync();
+            .Select(s => new { s.Id, s.Name, applicationUsage = db.ApplicationSkills.IgnoreQueryFilters().Count(l => l.SkillId == s.Id),
+                requiredUsage = db.ApplicationSkills.IgnoreQueryFilters().Count(l => l.SkillId == s.Id && l.Importance == 3),
+                userUsage = db.UserSkills.IgnoreQueryFilters().Count(l => l.SkillId == s.Id) }).ToListAsync();
         return Ok(new { items, totalCount, page, pageSize });
+    }
+    [HttpGet("skills/{id:guid}")]
+    public async Task<IActionResult> SkillDetails(Guid id)
+    {
+        var skill = await db.Skills.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id);
+        if (skill == null) return NotFound();
+        var links = await db.ApplicationSkills.IgnoreQueryFilters().AsNoTracking().Where(l => l.SkillId == id)
+            .Select(l => new { l.ApplicationId, l.Importance }).ToListAsync();
+        var ids = links.Select(l => l.ApplicationId).ToList();
+        var roles = await db.Applications.IgnoreQueryFilters().AsNoTracking().Where(a => ids.Contains(a.Id))
+            .GroupBy(a => a.Title).Select(g => new { title = g.Key, count = g.Count() }).OrderByDescending(r => r.count).ThenBy(r => r.title).Take(8).ToListAsync();
+        var related = await db.ApplicationSkills.IgnoreQueryFilters().AsNoTracking().Where(l => ids.Contains(l.ApplicationId) && l.SkillId != id)
+            .GroupBy(l => new { l.SkillId, l.Skill!.Name }).Select(g => new { id = g.Key.SkillId, name = g.Key.Name, count = g.Count() })
+            .OrderByDescending(r => r.count).ThenBy(r => r.name).Take(8).ToListAsync();
+        var postings = await db.Applications.IgnoreQueryFilters().AsNoTracking().Where(a => ids.Contains(a.Id))
+            .OrderByDescending(a => a.AppliedDate).Select(a => new { a.Title, a.RawDescription }).Take(30).ToListAsync();
+        var examples = postings.Select(a => new { a.Title, text = SkillExcerpt(a.RawDescription, skill.Name) })
+            .Where(a => a.text != null).Take(3).ToList();
+        var names = await db.Skills.AsNoTracking().Where(s => s.Id != id).Select(s => new { s.Id, s.Name }).ToListAsync();
+        var normalized = ApplicationDuplicates.Normalize(skill.Name).Replace(" ", "");
+        var aliases = names.Where(s => {
+            var candidate = ApplicationDuplicates.Normalize(s.Name).Replace(" ", "");
+            return candidate == normalized || normalized.Length >= 3 && candidate.Length >= 3 &&
+                (candidate.StartsWith(normalized, StringComparison.Ordinal) || normalized.StartsWith(candidate, StringComparison.Ordinal));
+        }).OrderBy(s => s.Name.Length).ThenBy(s => s.Name).Take(8).ToList();
+        return Ok(new { skill.Id, skill.Name, applicationUsage = links.Count,
+            userUsage = await db.UserSkills.IgnoreQueryFilters().CountAsync(l => l.SkillId == id),
+            requiredCount = links.Count(l => l.Importance == 3), preferredCount = links.Count(l => l.Importance == 2),
+            niceToHaveCount = links.Count(l => l.Importance == 1), roles, examples, relatedSkills = related, suggestedAliases = aliases });
+    }
+    private static string? SkillExcerpt(string description, string name)
+    {
+        var text = System.Text.RegularExpressions.Regex.Replace(description ?? "", @"<[^>]*>", " ");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        var index = text.IndexOf(name, StringComparison.OrdinalIgnoreCase);
+        if (index < 0) return null;
+        var start = Math.Max(0, index - 90); var length = Math.Min(260, text.Length - start);
+        return (start > 0 ? "…" : "") + text.Substring(start, length) + (start + length < text.Length ? "…" : "");
     }
     [HttpPost("skills/merge")]
     public async Task<IActionResult> MergeSkills(MergeSkillsRequest req)

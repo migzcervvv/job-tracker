@@ -28,6 +28,8 @@ public class ApplicationsController(AppDbContext db, IFitScorer fitScorer, Autom
     public async Task<IActionResult> Create(CreateApplicationRequest req)
     {
         if (Validate(req) is string error) return BadRequest(error);
+        await using var transaction = db.Database.IsRelational()
+            ? await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable) : null;
         if (req.ResumeId != null && !await db.Resumes.AnyAsync(r => r.Id == req.ResumeId)) return BadRequest("Resume not found.");
         if (req.RequestId is Guid requestId)
         {
@@ -35,11 +37,25 @@ public class ApplicationsController(AppDbContext db, IFitScorer fitScorer, Autom
             if (prior != null) return Ok(new { application = View(prior), wasDuplicate = true, automationTriggered = prior.ExtractionRunId != null, runId = prior.ExtractionRunId });
             if (await db.Applications.IgnoreQueryFilters().AnyAsync(a => a.Id == requestId)) return BadRequest("This request ID is unavailable.");
         }
+        if (!req.AllowDuplicate && !string.IsNullOrWhiteSpace(req.Company) && !string.IsNullOrWhiteSpace(req.RawDescription))
+        {
+            var company = ApplicationDuplicates.Normalize(req.Company);
+            var title = ApplicationDuplicates.Normalize(req.Title);
+            var headings = await db.Applications.AsNoTracking().Select(a => new { a.Id, a.Company, a.Title }).ToListAsync();
+            var ids = headings.Where(a => ApplicationDuplicates.Normalize(a.Company) == company && ApplicationDuplicates.Normalize(a.Title) == title).Select(a => a.Id).ToList();
+            var candidates = await db.Applications.AsNoTracking().Where(a => ids.Contains(a.Id)).Select(a => new { a.Id, a.Company, a.Title, a.RawDescription, a.Status, a.AppliedDate }).ToListAsync();
+            var matches = candidates.Select(a => new { a.Id, a.Company, a.Title, a.Status, a.AppliedDate,
+                descriptionSimilarity = ApplicationDuplicates.DescriptionSimilarity(req.RawDescription, a.RawDescription) })
+                .Where(a => a.descriptionSimilarity >= ApplicationDuplicates.Threshold).OrderByDescending(a => a.descriptionSimilarity).Take(10).ToList();
+            if (matches.Count > 0) return Conflict(new { code = "application_duplicate", threshold = ApplicationDuplicates.Threshold,
+                error = "A similar application already exists. Review the matches before saving another.", matches });
+        }
         var app = new Application { Id = req.RequestId ?? Guid.NewGuid(), UserId = UserId, Title = req.Title.Trim(), Company = req.Company?.Trim() ?? "", JobUrl = req.JobUrl, RawDescription = req.RawDescription, Status = req.Status, AppliedDate = req.AppliedDate ?? DateTimeOffset.UtcNow, ResumeId = req.ResumeId };
         db.Applications.Add(app);
         Event(app, "created", "Application created");
         var run = automation.Configured("skill_extraction") && !string.IsNullOrWhiteSpace(app.RawDescription) ? automation.Queue(UserId, "skill_extraction", app) : null;
         await db.SaveChangesAsync();
+        if (transaction != null) await transaction.CommitAsync();
         return Ok(new { application = View(app), wasDuplicate = false, automationTriggered = run != null, runId = run?.Id });
     }
     [HttpPut("{id:guid}")]
@@ -197,4 +213,4 @@ public class ApplicationsController(AppDbContext db, IFitScorer fitScorer, Autom
     public record NoteRequest(string Body);
 }
 public record CreateApplicationRequest(string Title, string? Company, string? JobUrl, string RawDescription,
-    ApplicationStatus Status = ApplicationStatus.Applied, DateTimeOffset? AppliedDate = null, Guid? ResumeId = null, Guid? RequestId = null);
+    ApplicationStatus Status = ApplicationStatus.Applied, DateTimeOffset? AppliedDate = null, Guid? ResumeId = null, Guid? RequestId = null, bool AllowDuplicate = false);

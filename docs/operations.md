@@ -4,7 +4,11 @@
 
 The frontend runs from VS Code with Vite and deploys to Netlify. The backend runs from Visual Studio 2022 and deploys to MonsterASP using the existing WebDeploy profile. Existing HTTP, HTTPS and IIS Express launch profiles are preserved.
 
-Frontend configuration is `client/.env.local` during development and Netlify build environment variables in production. `VITE_API_URL` is the API origin, without a trailing `/api`. When omitted, the client defaults to `https://localhost:7179` in development and `https://jtrackerch.runasp.net` in production. An accidentally appended `/api` is removed because request paths already include it. Explicit environment values override the defaults. The default HTTPS backend profile uses `https://localhost:7179`; HTTP uses `http://localhost:5233`. IIS Express uses its existing launch-settings ports. Frontend environment changes require a Vite restart or a new Netlify build.
+During local development, `client/.env.local` sets `VITE_API_URL` to the backend origin without `/api`. The HTTPS Visual Studio profile uses `https://localhost:7179`; HTTP uses `http://localhost:5233`; IIS Express uses `https://localhost:44393` or `http://localhost:45635`. The selected profile must be running. Restart Vite after changing this setting.
+
+Production builds use same-origin `/api` requests. `client/public/_redirects` forwards `/api/*` to `https://jtrackerch.runasp.net/api/:splat` before the SPA fallback. This rule is copied into `dist` by Vite. A stale Netlify `VITE_API_URL` no longer changes production API routing. To change the hosted API, update that proxy rule. Netlify proxy behavior is documented in [Rewrites and proxies](https://docs.netlify.com/manage/routing/redirects/rewrites-proxies/).
+
+Deploy both backend and frontend for the skill-context endpoint and duplicate checks. Redeploy Netlify to publish the routing file, then hard-refresh the browser. Verify `/api/health/ready` on the Netlify hostname returns JSON, then sign in and test application creation, detail, and Account settings. A backend health response alone does not verify an authenticated user request. Error screens now include expandable connection details with the address in use.
 
 Local private backend settings belong in Visual Studio **Manage User Secrets**. ASP.NET loads appsettings, development user secrets and environment variables. The design-time EF factory reads matching configuration too, so Package Manager Console migrations can use the same development connection.
 
@@ -47,7 +51,7 @@ Before releasing the repaired API, back up PostgreSQL and private resume storage
 
 The migrations add automation/notification/concurrency fields, recover stranded legacy extraction states, and scrub legacy automation message bodies. Those bodies cannot be recovered by rolling code back.
 
-Netlify deployment remains separate: build command `npm run build`, output `dist` relative to `client`, public `VITE_API_URL` pointing to MonsterASP. Existing Netlify site settings are not modified by repository cleanup.
+Netlify deployment remains separate: build command `npm run build`, output `dist` relative to `client`. The checked-in `/api` proxy points to MonsterASP. Visual Studio's existing backend publishing profile remains available.
 
 ## Recovery and external tasks
 

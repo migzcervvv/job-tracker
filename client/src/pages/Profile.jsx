@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ConnectionHelp } from "../components/ConnectionHelp.jsx";
 import { Layout } from "../components/Layout.jsx";
 import { getProfile, updateProfile, changePassword } from "../api/profile.js";
 import { api } from "../api/client.js";
@@ -17,6 +18,11 @@ export function Profile() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
+  const [loadErrors, setLoadErrors] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
+  const accountLoaded = useRef(false);
+  const preferencesLoaded = useRef(false);
   const [timeZones] = useState(() => [
     "UTC",
     ...(Intl.supportedValuesOf?.("timeZone") ?? [
@@ -28,24 +34,46 @@ export function Profile() {
   ]);
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([getProfile(), api.get("/api/me/preferences")])
-      .then(([data, prefs]) => {
-        if (!cancelled) {
-          setProfile(data);
-          setEmail(data.email);
-          setPreferences(prefs.data);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setFailed(true);
-          setMessage(extractErrorMessage(err));
-        }
-      });
+    void Promise.allSettled([
+      accountLoaded.current ? Promise.resolve(null) : getProfile(),
+      preferencesLoaded.current
+        ? Promise.resolve(null)
+        : api.get("/api/me/preferences"),
+    ]).then(([account, prefs]) => {
+      if (cancelled) return;
+      const errors = [];
+      if (!accountLoaded.current) {
+        if (
+          account.status === "fulfilled" &&
+          typeof account.value?.email === "string"
+        ) {
+          setProfile(account.value);
+          setEmail(account.value.email);
+          accountLoaded.current = true;
+        } else
+          errors.push(
+            "Account details: " + extractErrorMessage(account.reason),
+          );
+      }
+      if (!preferencesLoaded.current) {
+        if (
+          prefs.status === "fulfilled" &&
+          typeof prefs.value?.data?.timeZone === "string"
+        ) {
+          setPreferences(prefs.value.data);
+          preferencesLoaded.current = true;
+        } else
+          errors.push(
+            "Reminder settings: " + extractErrorMessage(prefs.reason),
+          );
+      }
+      setLoadErrors(errors);
+      setLoading(false);
+    });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [revision]);
   async function save(event, action, success) {
     event.preventDefault();
     setBusy(true);
@@ -64,6 +92,25 @@ export function Profile() {
   const demo = user.role === "test";
   return (
     <Layout title="Account settings">
+      {loadErrors.length > 0 && (
+        <section className="notice-error" role="alert">
+          <h3>Some account settings couldn’t load</h3>
+          {loadErrors.map((text) => (
+            <p key={text}>{text}</p>
+          ))}
+          <button
+            className="icon-btn"
+            disabled={loading}
+            onClick={() => {
+              setLoading(true);
+              setRevision((value) => value + 1);
+            }}
+          >
+            {loading ? "Retrying…" : "Try again"}
+          </button>
+          <ConnectionHelp />
+        </section>
+      )}
       {message && (
         <p
           className={failed ? "notice-error" : "notice-success"}
@@ -78,9 +125,7 @@ export function Profile() {
           changed.
         </p>
       )}
-      {!profile && !message && (
-        <p role="status">Loading your account settings…</p>
-      )}
+      {loading && <p role="status">Loading your account settings…</p>}
       <div className="settings-grid">
         {profile && (
           <>

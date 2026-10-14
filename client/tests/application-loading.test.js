@@ -9,16 +9,15 @@ beforeEach(() => {
   api.get.mockReset();
 });
 
-it("uses the deployed backend when production configuration is missing", () => {
-  expect(resolveApiBaseUrl(undefined, true)).toBe(
-    "https://jtrackerch.runasp.net",
-  );
-  expect(resolveApiBaseUrl(" ", true)).toBe("https://jtrackerch.runasp.net");
+it("uses Netlify's same-origin proxy even with a stale production build variable", () => {
+  expect(resolveApiBaseUrl(undefined, true)).toBe("");
+  expect(resolveApiBaseUrl("https://localhost:7179/api", true)).toBe("");
+  expect(resolveApiBaseUrl(" ", true)).toBe("");
   expect(resolveApiBaseUrl(undefined, false)).toBe("https://localhost:7179");
 });
 
 it("preserves custom hosts and prevents duplicate api path segments", () => {
-  expect(resolveApiBaseUrl(" https://api.example.test/api/ ", true)).toBe(
+  expect(resolveApiBaseUrl(" https://api.example.test/api/ ", false)).toBe(
     "https://api.example.test",
   );
   expect(resolveApiBaseUrl("http://localhost:5233/", false)).toBe(

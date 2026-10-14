@@ -18,6 +18,7 @@ import { updateApplicationStatus } from "../api/applications.js";
 import { STATUS_META, statusMeta } from "../api/statusMeta.js";
 import { extractErrorMessage } from "../api/errors.js";
 import { notify } from "../notify.js";
+import { ConnectionHelp } from "../components/ConnectionHelp.jsx";
 import { useApplications } from "../state/ApplicationsContext.jsx";
 
 function dateLabel(value) {
@@ -363,6 +364,7 @@ export function Dashboard() {
             >
               Try again
             </button>
+            <ConnectionHelp />
           </div>
         )}
         {!loadFailed && applications !== null && visible.length === 0 && (

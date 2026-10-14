@@ -7,6 +7,11 @@ import { runInNewContext } from "node:vm";
 const runId = "11111111-1111-1111-1111-111111111111";
 const applicationId = "22222222-2222-2222-2222-222222222222";
 const stageDetailId = "33333333-3333-3333-3333-333333333333";
+test("Netlify proxies API requests before the SPA fallback", async () => {
+  const rules = (await readFile(new URL("../client/public/_redirects", import.meta.url), "utf8")).trim().split(/\r?\n/);
+  assert.equal(rules[0], "/api/* https://jtrackerch.runasp.net/api/:splat 200!");
+  assert.equal(rules[1], "/* /index.html 200");
+});
 test("dispatch contracts reject missing run and saved-round IDs", () => {
   assert.throws(() => validateDispatch("skills", { applicationId, rawDescription: "Docker" }));
   assert.throws(() => validateDispatch("questions", { schemaVersion: 1, runId, applicationId }));
