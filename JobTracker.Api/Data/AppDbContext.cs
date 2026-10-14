@@ -18,6 +18,7 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
 
     public DbSet<AutomationRun> AutomationRuns => Set<AutomationRun>();
     public DbSet<StorageDeletion> StorageDeletions => Set<StorageDeletion>();
+    public DbSet<NotificationReceipt> NotificationReceipts => Set<NotificationReceipt>();
     public DbSet<Application> Applications => Set<Application>();
     public DbSet<StageDetail> StageDetails => Set<StageDetail>();
     public DbSet<TimelineEvent> TimelineEvents => Set<TimelineEvent>();
@@ -35,6 +36,7 @@ public class AppDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<G
         builder.Entity<Resume>().HasQueryFilter(r => _currentUserId != null && r.UserId == _currentUserId);
         builder.Entity<UserProfile>().HasQueryFilter(r => _currentUserId != null && r.UserId == _currentUserId);
         builder.Entity<AutomationRun>().HasQueryFilter(r => _currentUserId != null && r.UserId == _currentUserId);
+        builder.Entity<NotificationReceipt>().HasQueryFilter(r => _currentUserId != null && r.UserId == _currentUserId);
         builder.Entity<Application>().HasIndex(a => new { a.UserId, a.AppliedDate });
         builder.Entity<Application>().HasIndex(a => new { a.UserId, a.Status });
         builder.Entity<Resume>().HasIndex(r => new { r.UserId, r.CreatedAt });

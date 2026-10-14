@@ -55,10 +55,19 @@ public class ResumesController(AppDbContext db, ISupabaseStorageService storage,
     public static bool ValidSignature(string extension, byte[] bytes) => extension switch
     {
         ".pdf" => bytes.AsSpan().StartsWith("%PDF-"u8),
-        ".docx" => bytes.Length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4b && bytes[2] == 3 && bytes[3] == 4,
+        ".docx" => ValidDocx(bytes),
         ".doc" => bytes.AsSpan().StartsWith(new byte[] { 0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1 }),
         _ => false
     };
+    private static bool ValidDocx(byte[] bytes)
+    {
+        try
+        {
+            using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(bytes), System.IO.Compression.ZipArchiveMode.Read);
+            return zip.Entries.Count <= 5000 && zip.Entries.Sum(e => e.Length) <= 50_000_000 && zip.GetEntry("[Content_Types].xml") != null && zip.GetEntry("word/document.xml") != null;
+        }
+        catch (InvalidDataException) { return false; }
+    }
     [HttpGet("{id:guid}/download")]
     public async Task<IActionResult> Download(Guid id)
     {
@@ -106,6 +115,7 @@ public class ResumesController(AppDbContext db, ISupabaseStorageService storage,
         if (!automation.Configured("resume_extraction")) return BadRequest("Resume extraction is not configured.");
         // Every retry gets a new ID. Old callbacks cannot change this proposal.
         resume.ProposedSkillsJson = null;
+        resume.Version = Guid.NewGuid();
         var run = automation.Queue(UserId, "resume_extraction", resume: resume);
         await db.SaveChangesAsync(); return Accepted(AutomationService.View(run));
     }
@@ -130,26 +140,35 @@ public class ResumesController(AppDbContext db, ISupabaseStorageService storage,
     [HttpPost("{id:guid}/confirm-skills")]
     public async Task<IActionResult> Confirm(Guid id, SetSkillsRequest req)
     {
+        await using var tx = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync() : null;
         var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
         if (resume == null) return NotFound();
         var proposals = Proposals(resume).ToDictionary(s => SkillResolver.Normalize(s.Name));
+        if (req.RunId != resume.ExtractionRunId || resume.ExtractionStatus != "succeeded") return Conflict("Resume proposals changed. Reopen the review.");
         if (req.SkillNames == null || req.SkillNames.Any(n => string.IsNullOrWhiteSpace(n) || !proposals.ContainsKey(SkillResolver.Normalize(n)))) return BadRequest("Select skills from the current proposal.");
         var skills = await resolver.ResolveSkillsAsync(req.SkillNames);
         var existing = await db.UserSkills.ToListAsync();
         foreach (var skill in skills)
         {
             var proposal = proposals[skill.Name];
+            if (db.Database.IsNpgsql())
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"UserSkills\" (\"UserId\", \"SkillId\", \"Level\", \"EvidenceText\", \"EvidenceStrength\") VALUES ({UserId}, {skill.Id}, 0, {proposal.Evidence}, {proposal.Strength}) ON CONFLICT (\"UserId\", \"SkillId\") DO UPDATE SET \"EvidenceText\" = CASE WHEN EXCLUDED.\"EvidenceStrength\" >= \"UserSkills\".\"EvidenceStrength\" THEN EXCLUDED.\"EvidenceText\" ELSE \"UserSkills\".\"EvidenceText\" END, \"EvidenceStrength\" = GREATEST(\"UserSkills\".\"EvidenceStrength\", EXCLUDED.\"EvidenceStrength\")");
+                continue;
+            }
             var link = existing.FirstOrDefault(s => s.SkillId == skill.Id);
             if (link == null) { link = new UserSkill { UserId = UserId, SkillId = skill.Id }; db.UserSkills.Add(link); }
             if (proposal.Strength >= link.EvidenceStrength) { link.EvidenceText = proposal.Evidence; link.EvidenceStrength = proposal.Strength; }
         }
-        resume.ProposedSkillsJson = null; await db.SaveChangesAsync(); return Ok(skills.Select(s => s.Name));
+        resume.ProposedSkillsJson = null; resume.Version = Guid.NewGuid(); await db.SaveChangesAsync(); if (tx != null) await tx.CommitAsync(); return Ok(skills.Select(s => s.Name));
     }
     [HttpPost("{id:guid}/dismiss-skills")]
-    public async Task<IActionResult> Dismiss(Guid id)
+    public async Task<IActionResult> Dismiss(Guid id, ResumeRunRequest req)
     {
         var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id);
         if (resume == null) return NotFound();
-        resume.ProposedSkillsJson = null; await db.SaveChangesAsync(); return NoContent();
+        if (req.RunId != resume.ExtractionRunId) return Conflict("Resume proposals changed. Reopen the review.");
+        resume.ProposedSkillsJson = null; resume.Version = Guid.NewGuid(); await db.SaveChangesAsync(); return NoContent();
     }
+    public record ResumeRunRequest(Guid? RunId);
 }

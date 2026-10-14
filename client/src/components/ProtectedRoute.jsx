@@ -1,15 +1,15 @@
-import { Navigate, Outlet } from 'react-router-dom';
-import { useAuth } from '../auth/AuthContext.jsx';
-import { ApplicationsProvider } from '../state/ApplicationsContext.jsx';
+import { Navigate, Outlet } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext.jsx";
+import { ApplicationsProvider } from "../state/ApplicationsContext.jsx";
 
 export function ProtectedRoute() {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
 
   if (loading) return null;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
 
   return (
-    <ApplicationsProvider>
+    <ApplicationsProvider key={user.token}>
       <Outlet />
     </ApplicationsProvider>
   );

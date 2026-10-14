@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Layout } from '../../components/Layout.jsx';
-import { SkillPicker } from '../../components/SkillPicker.jsx';
-import { listSkillsAdmin, mergeSkills } from '../../api/admin.js';
-import { extractErrorMessage } from '../../api/errors.js';
-import { notify } from '../../notify.js';
+import { useEffect, useState } from "react";
+import { Layout } from "../../components/Layout.jsx";
+import { SkillPicker } from "../../components/SkillPicker.jsx";
+import { listSkillsAdmin, mergeSkills } from "../../api/admin.js";
+import { extractErrorMessage } from "../../api/errors.js";
+import { notify } from "../../notify.js";
 
 const PAGE_SIZE = 20;
 
@@ -12,17 +12,29 @@ export function AdminSkills() {
   const [target, setTarget] = useState(null);
   const [merging, setMerging] = useState(false);
 
-  const [tableSearch, setTableSearch] = useState('');
+  const [tableSearch, setTableSearch] = useState("");
   const [page, setPage] = useState(1);
   const [tableData, setTableData] = useState(null); // { items, totalCount }
+  const [revision, setRevision] = useState(0);
 
   function refreshTable() {
-    listSkillsAdmin({ search: tableSearch, page, pageSize: PAGE_SIZE })
-      .then(setTableData)
-      .catch((err) => notify.error('Could not load skills', extractErrorMessage(err)));
+    setRevision((previous) => previous + 1);
   }
 
-  useEffect(refreshTable, [tableSearch, page]);
+  useEffect(() => {
+    let cancelled = false;
+    listSkillsAdmin({ search: tableSearch, page, pageSize: PAGE_SIZE })
+      .then((data) => {
+        if (!cancelled) setTableData(data);
+      })
+      .catch((err) => {
+        if (!cancelled)
+          notify.error("Could not load skills", extractErrorMessage(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tableSearch, page, revision]);
 
   function handleSearchChange(value) {
     setTableSearch(value);
@@ -35,9 +47,9 @@ export function AdminSkills() {
     setMerging(true);
     try {
       await notify.promise(mergeSkills(source.id, target.id), {
-        loading: 'Merging…',
+        loading: "Merging…",
         success: (r) => `Merged into "${r.mergedInto}"`,
-        error: (err) => extractErrorMessage(err, 'Could not merge skills'),
+        error: (err) => extractErrorMessage(err, "Could not merge skills"),
       });
       setSource(null);
       setTarget(null);
@@ -49,19 +61,32 @@ export function AdminSkills() {
     }
   }
 
-  const totalPages = tableData ? Math.max(1, Math.ceil(tableData.totalCount / PAGE_SIZE)) : 1;
+  const totalPages = tableData
+    ? Math.max(1, Math.ceil(tableData.totalCount / PAGE_SIZE))
+    : 1;
 
   return (
     <Layout title="Manage skills">
-      <p style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 0, marginBottom: 20 }}>
-        Merge two entries that mean the same skill under different names —
-        e.g. "n8n" and "n8n automation" — into one. The merged-from entry is
-        removed; every application and user that had it tagged now has the
-        target instead. This affects everyone on this instance, which is why
-        it's admin-only.
+      <p
+        style={{
+          color: "var(--text-dim)",
+          fontSize: 13,
+          marginTop: 0,
+          marginBottom: 20,
+        }}
+      >
+        Merge two entries that mean the same skill under different names — e.g.
+        "n8n" and "n8n automation" — into one. The merged-from entry is removed;
+        every application and user that had it tagged now has the target
+        instead. This affects everyone on this instance, which is why it's
+        admin-only.
       </p>
 
-      <form onSubmit={handleMerge} className="panel" style={{ maxWidth: 560, marginBottom: 24 }}>
+      <form
+        onSubmit={handleMerge}
+        className="panel"
+        style={{ maxWidth: 560, marginBottom: 24 }}
+      >
         <div className="stage-form-grid" style={{ marginBottom: 14 }}>
           <SkillPicker
             label="Merge this skill…"
@@ -76,8 +101,12 @@ export function AdminSkills() {
             excludeId={source?.id}
           />
         </div>
-        <button className="btn-save" type="submit" disabled={merging || !source || !target}>
-          {merging ? 'Merging…' : 'Merge'}
+        <button
+          className="btn-save"
+          type="submit"
+          disabled={merging || !source || !target}
+        >
+          {merging ? "Merging…" : "Merge"}
         </button>
       </form>
 
@@ -88,41 +117,58 @@ export function AdminSkills() {
         value={tableSearch}
         onChange={(e) => handleSearchChange(e.target.value)}
         style={{
-          width: '100%',
+          width: "100%",
           maxWidth: 320,
           marginBottom: 14,
-          background: 'var(--panel-raised)',
-          border: '1px solid var(--line)',
-          borderRadius: 'var(--radius)',
-          padding: '8px 10px',
-          color: 'var(--text)',
+          background: "var(--panel-raised)",
+          border: "1px solid var(--line)",
+          borderRadius: "var(--radius)",
+          padding: "8px 10px",
+          color: "var(--text)",
         }}
       />
 
-      {tableData === null && <p style={{ color: 'var(--text-dim)' }}>Loading…</p>}
+      {tableData === null && (
+        <p style={{ color: "var(--text-dim)" }}>Loading…</p>
+      )}
 
       {tableData !== null && (
         <>
           <div className="admin-table">
-            <div className="admin-table-head" style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
+            <div
+              className="admin-table-head"
+              style={{ gridTemplateColumns: "2fr 1fr 1fr" }}
+            >
               <span>Skill</span>
               <span>On applications</span>
               <span>Claimed by users</span>
             </div>
             {tableData.items.map((s) => (
-              <div className="admin-table-row" style={{ gridTemplateColumns: '2fr 1fr 1fr' }} key={s.id}>
+              <div
+                className="admin-table-row"
+                style={{ gridTemplateColumns: "2fr 1fr 1fr" }}
+                key={s.id}
+              >
                 <span>{s.name}</span>
                 <span>{s.applicationUsage}</span>
                 <span>{s.userUsage}</span>
               </div>
             ))}
             {tableData.items.length === 0 && (
-              <div style={{ padding: 16, color: 'var(--text-dim)', fontSize: 13 }}>No skills match.</div>
+              <div
+                style={{ padding: 16, color: "var(--text-dim)", fontSize: 13 }}
+              >
+                No skills match.
+              </div>
             )}
           </div>
 
           <div className="pagination-row">
-            <button className="icon-btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+            <button
+              className="icon-btn"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
               Previous
             </button>
             <span className="pagination-status">

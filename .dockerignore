@@ -1,0 +1,11 @@
+**/bin
+**/obj
+**/node_modules
+**/dist
+.git
+**/.env*
+**/appsettings.Development.json
+**/appsettings.Production.json
+**/*.user
+**/TestResults
+artifacts

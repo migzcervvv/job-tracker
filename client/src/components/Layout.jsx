@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Sidebar } from './Sidebar.jsx';
+import { useState } from "react";
+import { Sidebar } from "./Sidebar.jsx";
 
 export function Layout({ title, actions, children }) {
   const [navOpen, setNavOpen] = useState(false);

@@ -1,12 +1,12 @@
-import { useDroppable } from '@dnd-kit/core';
-import { AnimatePresence, motion } from 'framer-motion';
-import { ApplicationCard } from './ApplicationCard.jsx';
+import { useDroppable } from "@dnd-kit/core";
+import { AnimatePresence, motion } from "framer-motion";
+import { ApplicationCard } from "./ApplicationCard.jsx";
 
 export function KanbanColumn({ meta, applications, onOpenApplication }) {
   const { setNodeRef, isOver } = useDroppable({ id: meta.value });
 
   return (
-    <div ref={setNodeRef} className={`kanban-col${isOver ? ' is-over' : ''}`}>
+    <div ref={setNodeRef} className={`kanban-col${isOver ? " is-over" : ""}`}>
       <div className="kanban-col-head">
         <span className="tick" style={{ background: meta.color }} />
         <span className="name">{meta.label}</span>

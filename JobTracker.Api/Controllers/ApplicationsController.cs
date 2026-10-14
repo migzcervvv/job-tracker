@@ -16,12 +16,13 @@ public class ApplicationsController(AppDbContext db, IFitScorer fitScorer, Autom
     [HttpGet]
     public async Task<IActionResult> List(int page = 1, int pageSize = 100, string? search = null, ApplicationStatus? status = null)
     {
-        var query = db.Applications.AsNoTracking();
+        var query = db.Applications.AsNoTracking().Include(a => a.StageDetails).AsQueryable();
         if (!string.IsNullOrWhiteSpace(search)) { var term = search.Trim().ToLower(); query = query.Where(a => a.Title.ToLower().Contains(term) || a.Company.ToLower().Contains(term)); }
         if (status.HasValue) query = query.Where(a => a.Status == status);
         var apps = await query.OrderByDescending(a => a.AppliedDate).ThenBy(a => a.Id).Skip((Math.Max(page, 1) - 1) * Math.Clamp(pageSize, 1, 200)).Take(Math.Clamp(pageSize, 1, 200)).ToListAsync();
         var scores = await fitScorer.ScoreAsync(UserId, apps.Select(a => a.Id).ToList());
-        return Ok(apps.Select(a => View(a, scores.GetValueOrDefault(a.Id))));
+        var zone = await db.UserProfiles.Where(p => p.UserId == UserId).Select(p => p.TimeZone).FirstOrDefaultAsync() ?? "UTC";
+        return Ok(apps.Select(a => View(a, scores.GetValueOrDefault(a.Id), zone)));
     }
     [HttpPost]
     public async Task<IActionResult> Create(CreateApplicationRequest req)
@@ -32,6 +33,7 @@ public class ApplicationsController(AppDbContext db, IFitScorer fitScorer, Autom
         {
             var prior = await db.Applications.FirstOrDefaultAsync(a => a.Id == requestId);
             if (prior != null) return Ok(new { application = View(prior), wasDuplicate = true, automationTriggered = prior.ExtractionRunId != null, runId = prior.ExtractionRunId });
+            if (await db.Applications.IgnoreQueryFilters().AnyAsync(a => a.Id == requestId)) return BadRequest("This request ID is unavailable.");
         }
         var app = new Application { Id = req.RequestId ?? Guid.NewGuid(), UserId = UserId, Title = req.Title.Trim(), Company = req.Company?.Trim() ?? "", JobUrl = req.JobUrl, RawDescription = req.RawDescription, Status = req.Status, AppliedDate = req.AppliedDate ?? DateTimeOffset.UtcNow, ResumeId = req.ResumeId };
         db.Applications.Add(app);
@@ -50,9 +52,11 @@ public class ApplicationsController(AppDbContext db, IFitScorer fitScorer, Autom
         var input = req.Application;
         if (input.ResumeId != null && !await db.Resumes.AnyAsync(r => r.Id == input.ResumeId)) return BadRequest("Resume not found.");
         var descriptionChanged = app.RawDescription != input.RawDescription;
+        var previousStatus = app.Status;
         app.Title = input.Title.Trim(); app.Company = input.Company?.Trim() ?? ""; app.JobUrl = input.JobUrl;
         app.RawDescription = input.RawDescription; app.AppliedDate = input.AppliedDate ?? app.AppliedDate; app.Status = input.Status;
         app.ResumeId = input.ResumeId;
+        if (previousStatus != input.Status) Event(app, "status_changed", $"{previousStatus} → {input.Status}");
         if (descriptionChanged)
         {
             app.RequirementsEmbedding = null;
@@ -117,13 +121,15 @@ public class ApplicationsController(AppDbContext db, IFitScorer fitScorer, Autom
         var app = await db.Applications.Include(a => a.TimelineEvents).Include(a => a.StageDetails).FirstOrDefaultAsync(a => a.Id == id);
         if (app == null) return NotFound();
         var score = (await fitScorer.ScoreAsync(UserId, new() { id })).GetValueOrDefault(id);
-        return Ok(View(app, score));
+        var zone = await db.UserProfiles.Where(p => p.UserId == UserId).Select(p => p.TimeZone).FirstOrDefaultAsync() ?? "UTC";
+        return Ok(View(app, score, zone));
     }
-    public static object View(Application a, FitBreakdown? fit = null) => new
+    public static object View(Application a, FitBreakdown? fit = null, string timeZone = "UTC") => new
     {
         a.Id, a.Title, a.Company, a.JobUrl, a.RawDescription, a.Status, a.AppliedDate, a.UpdatedAt, a.Version,
         a.ResumeId, a.NextAction, a.FollowUpAt, a.SnoozedUntil, a.LastEmployerResponseAt, a.ContactName, a.ContactEmail,
         fitPercentage = fit?.Overall, fit, extractionRunId = a.ExtractionRunId,
+        nextDeadlineAt = a.Status >= ApplicationStatus.Applied && a.Status <= ApplicationStatus.Offered ? DeadlineService.All(a, timeZone).Select(d => (DateTimeOffset?)d.DueAt).Min() : null,
         timeline = a.TimelineEvents.OrderByDescending(t => t.CreatedAt).Select(t => new { t.Id, t.Type, t.Body, t.CreatedAt }),
         stageDetails = a.StageDetails.OrderBy(s => s.CreatedAt).Select(StageView)
     };
@@ -150,6 +156,7 @@ public class ApplicationsController(AppDbContext db, IFitScorer fitScorer, Autom
         if (!await db.Applications.AnyAsync(a => a.Id == id)) return NotFound();
         var query = db.AutomationRuns.Where(r => r.ApplicationId == id && r.Type == type);
         var run = runId.HasValue ? await query.FirstOrDefaultAsync(r => r.Id == runId) : await query.OrderByDescending(r => r.CreatedAt).FirstOrDefaultAsync();
+        if (runId.HasValue && run == null) return NotFound();
         return Ok(AutomationService.View(run));
     }
     [HttpPost("{id:guid}/retry-skill-extraction")]
@@ -158,6 +165,7 @@ public class ApplicationsController(AppDbContext db, IFitScorer fitScorer, Autom
         var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
         if (app == null) return NotFound();
         if (!automation.Configured("skill_extraction")) return BadRequest("Skill extraction is not configured.");
+        if (string.IsNullOrWhiteSpace(app.RawDescription)) return BadRequest("Add a job description before extraction.");
         var run = automation.Queue(UserId, "skill_extraction", app); app.Version = Guid.NewGuid();
         await db.SaveChangesAsync(); return Accepted(AutomationService.View(run));
     }
@@ -178,7 +186,7 @@ public class ApplicationsController(AppDbContext db, IFitScorer fitScorer, Autom
     }
     public static string? Validate(CreateApplicationRequest req)
     {
-        if (string.IsNullOrWhiteSpace(req.Title) || req.Title.Length > 200 || req.Company?.Length > 200 || req.RawDescription.Length > 100000) return "Invalid title, company, or description.";
+        if (string.IsNullOrWhiteSpace(req.Title) || req.Title.Length > 200 || req.Company?.Length > 200 || req.RawDescription == null || req.RawDescription.Length > 100000) return "Invalid title, company, or description.";
         if (!InputValidation.WebUrl(req.JobUrl) || !Enum.IsDefined(req.Status)) return "Invalid posting URL or status.";
         if (req.AppliedDate > DateTimeOffset.UtcNow.AddDays(1)) return "Applied date cannot be in the future.";
         return null;

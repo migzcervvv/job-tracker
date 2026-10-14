@@ -6,5 +6,5 @@ namespace JobTracker.Api.Tests;
 public class FakeCurrentUser : ICurrentUserAccessor
 {
     public Guid? UserId { get; }
-    public FakeCurrentUser(Guid userId) => UserId = userId;
+    public FakeCurrentUser(Guid? userId) => UserId = userId;
 }

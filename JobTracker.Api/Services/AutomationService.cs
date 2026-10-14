@@ -24,7 +24,7 @@ public class AutomationService(AppDbContext db, IConfiguration config, IHttpCont
         var run = new AutomationRun { UserId = userId, Type = type, ApplicationId = app?.Id, ResumeId = resume?.Id, StageDetailId = stage?.Id };
         db.AutomationRuns.Add(run);
         if (type == "skill_extraction" && app != null) app.ExtractionRunId = run.Id;
-        if (resume != null) { resume.ExtractionRunId = run.Id; resume.ExtractionStatus = "queued"; }
+        if (resume != null) { resume.ExtractionRunId = run.Id; resume.ExtractionStatus = "queued"; resume.Version = Guid.NewGuid(); }
         if (stage != null) stage.QuestionRunId = run.Id;
         if (IsDemo)
         {
@@ -42,7 +42,9 @@ public class AutomationService(AppDbContext db, IConfiguration config, IHttpCont
 
     public static object View(AutomationRun? run) => new
     {
-        runId = run?.Id, status = run?.Status, message = run?.ErrorCode,
+        runId = run?.Id,
+        status = run != null && !AutomationRun.IsTerminal(run.Status) && run.DeadlineAt <= DateTimeOffset.UtcNow ? "failed" : run?.Status,
+        message = run != null && !AutomationRun.IsTerminal(run.Status) && run.DeadlineAt <= DateTimeOffset.UtcNow ? "callback_timeout" : run?.ErrorCode,
         createdAt = run?.CreatedAt, updatedAt = run?.UpdatedAt, attempts = run?.Attempts,
         stageDetailId = run?.StageDetailId
     };
@@ -61,9 +63,12 @@ public sealed class AutomationDispatcher(AppDbContext db, IConfiguration config,
 
         var due = await db.AutomationRuns.IgnoreQueryFilters()
             .Where(r => (r.Status == "queued" || r.Status == "dispatching") && r.NextAttemptAt <= now && r.DeadlineAt > now)
-            .OrderBy(r => r.CreatedAt).Take(10).ToListAsync(ct);
-        foreach (var run in due)
+            .OrderBy(r => r.CreatedAt).Select(r => r.Id).Take(10).ToListAsync(ct);
+        foreach (var runId in due)
         {
+            db.ChangeTracker.Clear();
+            var run = await db.AutomationRuns.IgnoreQueryFilters().FirstOrDefaultAsync(r => r.Id == runId, ct);
+            if (run == null || run.NextAttemptAt > now || run.DeadlineAt <= now || run.Status is not ("queued" or "dispatching")) continue;
             if (run.Attempts >= 4) { run.Status = "failed"; run.ErrorCode = "dispatch_exhausted"; run.Version = Guid.NewGuid(); await TrySave(ct); continue; }
             run.Status = "dispatching";
             run.Attempts++;
@@ -109,7 +114,10 @@ public sealed class AutomationDispatcher(AppDbContext db, IConfiguration config,
         await db.SaveChangesAsync(ct);
         var retention = now.AddDays(-30);
         if (db.Database.IsNpgsql())
-            await db.AutomationRuns.IgnoreQueryFilters().Where(r => r.UpdatedAt < retention && (r.Status == "succeeded" || r.Status == "cancelled")).ExecuteDeleteAsync(ct);
+            await db.AutomationRuns.IgnoreQueryFilters().Where(r => r.UpdatedAt < retention && (r.Status == "succeeded" || r.Status == "failed" || r.Status == "cancelled") &&
+                !db.Applications.IgnoreQueryFilters().Any(a => a.ExtractionRunId == r.Id) &&
+                !db.Resumes.IgnoreQueryFilters().Any(a => a.ExtractionRunId == r.Id) &&
+                !db.StageDetails.IgnoreQueryFilters().Any(s => s.QuestionRunId == r.Id)).ExecuteDeleteAsync(ct);
     }
 
     private async Task<bool> TrySave(CancellationToken ct)

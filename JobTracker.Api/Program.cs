@@ -36,7 +36,7 @@ var testDatabase = builder.Environment.IsEnvironment("Testing") ? builder.Config
 var testRoot = new Microsoft.EntityFrameworkCore.Storage.InMemoryDatabaseRoot();
 builder.Services.AddDbContext<IdentityStoreContext>(options =>
 {
-    if (testDatabase != null) options.UseInMemoryDatabase(testDatabase, testRoot);
+    if (testDatabase != null) options.UseInMemoryDatabase(testDatabase, testRoot).EnableServiceProviderCaching(false);
     else options.UseNpgsql(connectionString);
 });
 builder.Services.AddDbContext<AppDbContext>((sp, options) =>
@@ -45,9 +45,10 @@ builder.Services.AddDbContext<AppDbContext>((sp, options) =>
     if (user?.IsInRole("test") == true)
     {
         var session = user.FindFirst("jti")?.Value ?? throw new InvalidOperationException("Demo session ID missing.");
-        options.UseInMemoryDatabase("demo", sp.GetRequiredService<DemoSandboxStore>().GetRoot(session));
+        // Disposable sandbox roots must not accumulate in EF's process-wide provider cache.
+        options.UseInMemoryDatabase("demo", sp.GetRequiredService<DemoSandboxStore>().GetRoot(session)).EnableServiceProviderCaching(false);
     }
-    else if (testDatabase != null) options.UseInMemoryDatabase(testDatabase, testRoot);
+    else if (testDatabase != null) options.UseInMemoryDatabase(testDatabase, testRoot).EnableServiceProviderCaching(false);
     else options.UseNpgsql(connectionString, o => o.UseVector());
 });
 builder.Services.AddIdentityCore<IdentityUser<Guid>>(options =>
@@ -129,6 +130,8 @@ app.Use(async (context, next) =>
     try { await next(); }
     catch (DbUpdateConcurrencyException)
     { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { error = "This record changed. Reload before saving." }); }
+    catch (Exception ex) when (ex is Npgsql.PostgresException { SqlState: "40001" or "40P01" or "23505" } || ex is DbUpdateException { InnerException: Npgsql.PostgresException { SqlState: "40001" or "40P01" or "23505" } })
+    { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { error = "Concurrent update. Reload before retrying." }); }
     catch (Exception ex)
     {
         app.Logger.LogError("Request {RequestId} failed ({ExceptionType})", context.TraceIdentifier, ex.GetType().Name);

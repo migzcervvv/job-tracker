@@ -1,0 +1,16 @@
+title = "Job Tracker secret scanning"
+[extend]
+useDefault = true
+# Allow only deterministic public fixtures. Production credentials are never allowlisted.
+[allowlist]
+description = "Public, non-operational fixture secrets"
+paths = ['''(^|/|\\)(node_modules|bin|obj|dist|artifacts|\.terraform|\.vs)(/|\\)''']
+regexTarget = "match"
+regexes = [
+  '''integration-test-key-with-32-bytes-minimum''',
+  '''test-key-at-least-32-characters-long''',
+  '''ci-key-at-least-32-bytes-long-for-test-only''',
+  '''integration-only-password''',
+  '''local-development-only''',
+  '''replace-with-[a-z0-9-]+'''
+]

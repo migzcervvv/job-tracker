@@ -1,161 +1,121 @@
-import { useState } from "react";
+import { useId, useState } from "react";
+import { useVersionedDraft } from "../hooks/useVersionedDraft.js";
 import { STAGE_FIELDS } from "../api/stageFields.js";
 import { upsertStageDetail } from "../api/applications.js";
+import { toInstant, toLocalInput } from "../api/datetime.js";
 import { extractErrorMessage } from "../api/errors.js";
 import { notify } from "../notify.js";
-import { STATUS } from "../api/statusMeta.js";
-
-const FULL_WIDTH_TYPES = new Set(["textarea", "url", "checkbox"]);
-
-function FieldInput({ field, value, onChange }) {
-  if (field.type === "textarea") {
-    return (
-      <textarea
-        rows={3}
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    );
-  }
-
-  if (field.type === "select") {
-    return (
-      <select value={value ?? ""} onChange={(e) => onChange(e.target.value)}>
-        <option value="">—</option>
-        {field.options.map((opt) => (
-          <option key={opt} value={opt}>
-            {opt}
-          </option>
-        ))}
-      </select>
-    );
-  }
-
-  if (field.type === "checkbox") {
-    return (
-      <div className="field-checkbox">
-        <input
-          id={`sf-${field.key}`}
-          type="checkbox"
-          checked={Boolean(value)}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-        <label htmlFor={`sf-${field.key}`}>{field.label}</label>
-      </div>
-    );
-  }
-
-  return (
-    <input
-      type={field.type}
-      value={value ?? ""}
-      onChange={(e) => onChange(e.target.value)}
-    />
-  );
-}
-
-// stageDetailId: pass the record's id when this instance is editing an
-// existing entry in place. Leave null when creating (current-stage
-// first save, or a brand-new interview round) — see the backend note in
-// ApplicationsController.UpsertStageDetail for why this matters.
-//
-// appendsNewRound: true only for the one slot whose job is to create the
-// NEXT interview round. Editing an existing round must never clear the
-// form after saving.
 export function StageDetailForm({
   applicationId,
   stage,
   initialFields,
   onSaved,
-  appendsNewRound = false,
   stageDetailId = null,
+  version = null,
   onCancel = null,
 }) {
-  const fieldDefs = STAGE_FIELDS[stage];
-  const [values, setValues] = useState(initialFields ?? {});
+  const prefix = useId();
+  const defs = STAGE_FIELDS[stage] ?? [];
+  const {
+    values,
+    version: draftVersion,
+    change: setValues,
+  } = useVersionedDraft(
+    Object.fromEntries(
+      Object.entries(initialFields ?? {}).map(([key, value]) => [
+        key,
+        defs.find((f) => f.key === key)?.type === "datetime-local"
+          ? toLocalInput(value)
+          : value,
+      ]),
+    ),
+    version,
+  );
   const [submitting, setSubmitting] = useState(false);
-
-  if (!fieldDefs) return null; // Withdrawn / Archived — nothing to fill in
-
-  function setField(key, val) {
-    setValues((prev) => ({ ...prev, [key]: val }));
+  function change(key, value) {
+    setValues((prev) => ({ ...prev, [key]: value }));
   }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
+  async function submit(event) {
+    event.preventDefault();
     setSubmitting(true);
     try {
-      const saved = await notify.promise(
-        upsertStageDetail(applicationId, stage, values, stageDetailId),
-        {
-          loading: "Saving…",
-          success:
-            stage === STATUS.InterviewScheduled
-              ? "Round saved"
-              : "Stage details saved",
-          error: (err) => extractErrorMessage(err, "Could not save"),
-        },
+      const fields = { ...values };
+      for (const def of defs)
+        if (def.type === "datetime-local" && fields[def.key])
+          fields[def.key] = toInstant(fields[def.key]);
+      if (fields.scheduledAt)
+        fields.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const saved = await upsertStageDetail(
+        applicationId,
+        stage,
+        fields,
+        stageDetailId,
+        draftVersion,
       );
       onSaved(saved);
-      if (appendsNewRound) setValues({}); // this slot just created a round — clear it for the next one
-    } catch {
-      // toast already shown
+    } catch (err) {
+      notify.error("Could not save stage", extractErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
   }
-
   return (
-    <form className="stage-form" onSubmit={handleSubmit}>
+    <form className="stage-form" onSubmit={submit}>
       <div className="stage-form-grid">
-        {fieldDefs.map((f) => {
-          const spanFull = FULL_WIDTH_TYPES.has(f.type);
-          if (f.type === "checkbox") {
-            return (
-              <div className="field span-2" key={f.key}>
-                <FieldInput
-                  field={f}
-                  value={values[f.key]}
-                  onChange={(v) => setField(f.key, v)}
-                />
-              </div>
-            );
-          }
-          return (
-            <div className={`field${spanFull ? " span-2" : ""}`} key={f.key}>
-              <label>{f.label}</label>
-              <FieldInput
-                field={f}
-                value={values[f.key]}
-                onChange={(v) => setField(f.key, v)}
-              />
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="stage-form-actions">
-        {appendsNewRound && (
-          <span className="stage-form-hint">
-            Saving adds a new round — it won't overwrite the last one.
-          </span>
-        )}
-        {onCancel && (
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={onCancel}
-            disabled={submitting}
+        {defs.map((f) => (
+          <div
+            className={`field${["textarea", "url", "checkbox"].includes(f.type) ? " span-2" : ""}`}
+            key={f.key}
           >
+            <label htmlFor={prefix + f.key}>{f.label}</label>
+            {f.type === "textarea" ? (
+              <textarea
+                id={prefix + f.key}
+                rows={3}
+                maxLength={10000}
+                value={values[f.key] ?? ""}
+                onChange={(e) => change(f.key, e.target.value)}
+                disabled={submitting}
+              />
+            ) : f.type === "select" ? (
+              <select
+                id={prefix + f.key}
+                value={values[f.key] ?? ""}
+                onChange={(e) => change(f.key, e.target.value)}
+                disabled={submitting}
+              >
+                <option value="">—</option>
+                {f.options.map((option) => (
+                  <option key={option}>{option}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id={prefix + f.key}
+                type={f.type}
+                {...(f.type === "checkbox"
+                  ? { checked: Boolean(values[f.key]) }
+                  : { value: values[f.key] ?? "" })}
+                onChange={(e) =>
+                  change(
+                    f.key,
+                    f.type === "checkbox" ? e.target.checked : e.target.value,
+                  )
+                }
+                disabled={submitting}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="stage-form-actions">
+        {onCancel && (
+          <button type="button" className="icon-btn" onClick={onCancel}>
             Cancel
           </button>
         )}
-        <button className="btn-save" type="submit" disabled={submitting}>
-          {submitting
-            ? "Saving…"
-            : stage === STATUS.InterviewScheduled
-              ? "Save round"
-              : "Save stage details"}
+        <button className="btn-save" disabled={submitting}>
+          {submitting ? "Saving…" : "Save details"}
         </button>
       </div>
     </form>

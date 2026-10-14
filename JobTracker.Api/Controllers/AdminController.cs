@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace JobTracker.Api.Controllers;
 [ApiController, Route("api/admin"), Authorize(Roles = "admin")]
-public class AdminController(AppDbContext db, UserManager<IdentityUser<Guid>> users, IAppStartTime startTime, IN8nHealthChecker n8nHealth) : ControllerBase
+public class AdminController(AppDbContext db, IdentityStoreContext identity, UserManager<IdentityUser<Guid>> users, IAppStartTime startTime, IN8nHealthChecker n8nHealth) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     [HttpGet("users")]
@@ -59,6 +59,7 @@ public class AdminController(AppDbContext db, UserManager<IdentityUser<Guid>> us
         db.UserSkills.RemoveRange(await db.UserSkills.IgnoreQueryFilters().Where(s => s.UserId == id).ToListAsync());
         db.ApplicationSkills.RemoveRange(await db.ApplicationSkills.IgnoreQueryFilters().Where(s => appIds.Contains(s.ApplicationId)).ToListAsync());
         db.AutomationRuns.RemoveRange(await db.AutomationRuns.IgnoreQueryFilters().Where(r => r.UserId == id).ToListAsync());
+        db.NotificationReceipts.RemoveRange(await db.NotificationReceipts.IgnoreQueryFilters().Where(r => r.UserId == id).ToListAsync());
         db.AutomationLogEntries.RemoveRange(await db.AutomationLogEntries.Where(r => r.ApplicationId != null && appIds.Contains(r.ApplicationId.Value)).ToListAsync());
         db.Applications.RemoveRange(apps); db.Users.Remove(user);
         await db.SaveChangesAsync(); if (tx != null) await tx.CommitAsync();
@@ -68,11 +69,16 @@ public class AdminController(AppDbContext db, UserManager<IdentityUser<Guid>> us
     public async Task<IActionResult> CreateUser(CreateUserRequest req)
     {
         if (req.Role is not ("user" or "admin")) return BadRequest("Role must be user or admin.");
+        await using var tx = identity.Database.IsRelational() ? await identity.Database.BeginTransactionAsync() : null;
         var user = new IdentityUser<Guid> { Email = req.Email, UserName = req.Email };
         var result = await users.CreateAsync(user, req.Password);
         if (!result.Succeeded) return BadRequest(result.Errors.Select(e => e.Description));
         result = await users.AddToRoleAsync(user, req.Role);
-        if (!result.Succeeded) { await users.DeleteAsync(user); return BadRequest(result.Errors.Select(e => e.Description)); }
+        if (!result.Succeeded) {
+            if (tx == null && !(await users.DeleteAsync(user)).Succeeded) throw new InvalidOperationException("User creation rollback failed.");
+            return BadRequest(result.Errors.Select(e => e.Description));
+        }
+        if (tx != null) await tx.CommitAsync();
         return Ok(new { user.Id, user.Email, req.Role });
     }
     [HttpGet("health")]
@@ -100,7 +106,7 @@ public class AdminController(AppDbContext db, UserManager<IdentityUser<Guid>> us
         var run = new AutomationRun { UserId = old.UserId, Type = old.Type, ApplicationId = old.ApplicationId, ResumeId = old.ResumeId, StageDetailId = old.StageDetailId };
         db.AutomationRuns.Add(run);
         if (run.Type == "skill_extraction") { app!.ExtractionRunId = run.Id; app.Version = Guid.NewGuid(); }
-        if (resume != null) { resume.ExtractionRunId = run.Id; resume.ExtractionStatus = "queued"; }
+        if (resume != null) { resume.ExtractionRunId = run.Id; resume.ExtractionStatus = "queued"; resume.Version = Guid.NewGuid(); }
         if (stage != null) { stage.QuestionRunId = run.Id; stage.Version = Guid.NewGuid(); }
         await db.SaveChangesAsync(); return Accepted(AutomationService.View(run));
     }
@@ -123,6 +129,8 @@ public class AdminController(AppDbContext db, UserManager<IdentityUser<Guid>> us
         var source = await db.Skills.FindAsync(req.SourceSkillId); var target = await db.Skills.FindAsync(req.TargetSkillId);
         if (source == null || target == null) return NotFound();
         var appLinks = await db.ApplicationSkills.IgnoreQueryFilters().Where(l => l.SkillId == source.Id || l.SkillId == target.Id).ToListAsync();
+        var affected = appLinks.Where(l => l.SkillId == source.Id).Select(l => l.ApplicationId).ToList();
+        foreach (var application in await db.Applications.IgnoreQueryFilters().Where(a => affected.Contains(a.Id)).ToListAsync()) application.Version = Guid.NewGuid();
         foreach (var link in appLinks.Where(l => l.SkillId == source.Id))
         {
             var replacement = appLinks.FirstOrDefault(l => l.ApplicationId == link.ApplicationId && l.SkillId == target.Id);

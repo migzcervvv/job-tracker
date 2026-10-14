@@ -37,16 +37,34 @@ namespace JobTracker.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("ContactEmail")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ContactName")
+                        .HasColumnType("text");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("EducationRequirement")
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("ExtractionRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("FollowUpAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Vector>("JobEmbedding")
                         .HasColumnType("vector(1536)");
 
                     b.Property<string>("JobUrl")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("LastEmployerResponseAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NextAction")
                         .HasColumnType("text");
 
                     b.Property<string>("RawDescription")
@@ -59,8 +77,14 @@ namespace JobTracker.Api.Migrations
                     b.Property<Vector>("RequirementsEmbedding")
                         .HasColumnType("vector(1536)");
 
+                    b.Property<Guid?>("ResumeId")
+                        .HasColumnType("uuid");
+
                     b.Property<int?>("SeniorityLevel")
                         .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("SnoozedUntil")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");
@@ -75,7 +99,15 @@ namespace JobTracker.Api.Migrations
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("UserId", "AppliedDate");
+
+                    b.HasIndex("UserId", "Status");
 
                     b.ToTable("Applications");
                 });
@@ -126,6 +158,94 @@ namespace JobTracker.Api.Migrations
                     b.ToTable("AutomationLogEntries");
                 });
 
+            modelBuilder.Entity("JobTracker.Api.Models.AutomationRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ApplicationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("DeadlineAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErrorCode")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ResumeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("StageDetailId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "NextAttemptAt");
+
+                    b.HasIndex("ApplicationId", "Type", "CreatedAt");
+
+                    b.ToTable("AutomationRuns");
+                });
+
+            modelBuilder.Entity("JobTracker.Api.Models.NotificationReceipt", b =>
+                {
+                    b.Property<string>("DeliveryKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("LeaseToken")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
+                    b.HasKey("DeliveryKey");
+
+                    b.ToTable("NotificationReceipts");
+                });
+
             modelBuilder.Entity("JobTracker.Api.Models.Resume", b =>
                 {
                     b.Property<Guid>("Id")
@@ -139,14 +259,23 @@ namespace JobTracker.Api.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Vector>("Embedding")
+                        .HasColumnType("vector(1536)");
+
                     b.Property<string>("ExtractedText")
                         .HasColumnType("text");
+
+                    b.Property<Guid?>("ExtractionRunId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("ExtractionStatus")
                         .HasColumnType("text");
 
                     b.Property<string>("FileName")
                         .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProfileJson")
                         .HasColumnType("text");
 
                     b.Property<string>("ProposedSkillsJson")
@@ -162,7 +291,13 @@ namespace JobTracker.Api.Migrations
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CreatedAt");
 
                     b.ToTable("Resumes");
                 });
@@ -201,14 +336,45 @@ namespace JobTracker.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("GeneratedQuestions")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("QuestionRunId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("Stage")
                         .HasColumnType("integer");
+
+                    b.Property<Guid>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
                     b.HasIndex("ApplicationId");
 
                     b.ToTable("StageDetails");
+                });
+
+            modelBuilder.Entity("JobTracker.Api.Models.StorageDeletion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("StoragePath")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("StorageDeletions");
                 });
 
             modelBuilder.Entity("JobTracker.Api.Models.TimelineEvent", b =>
@@ -244,11 +410,17 @@ namespace JobTracker.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("ActiveResumeId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Education")
                         .HasColumnType("text");
 
                     b.Property<int>("ExperienceYears")
                         .HasColumnType("integer");
+
+                    b.Property<bool>("RemindersEnabled")
+                        .HasColumnType("boolean");
 
                     b.Property<Vector>("ResumeEmbedding")
                         .HasColumnType("vector(1536)");
@@ -258,6 +430,13 @@ namespace JobTracker.Api.Migrations
 
                     b.Property<int?>("SeniorityLevel")
                         .HasColumnType("integer");
+
+                    b.Property<string>("TimeZone")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("WeeklyDigestEnabled")
+                        .HasColumnType("boolean");
 
                     b.HasKey("UserId");
 

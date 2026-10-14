@@ -3,6 +3,8 @@ namespace JobTracker.Api.Models;
 
 public class Resume
 {
+    [System.ComponentModel.DataAnnotations.ConcurrencyCheck]
+    public Guid Version { get; set; } = Guid.NewGuid();
     public Guid? ExtractionRunId { get; set; }
     public string? ProfileJson { get; set; }
     public Pgvector.Vector? Embedding { get; set; }

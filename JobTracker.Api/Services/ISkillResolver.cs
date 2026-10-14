@@ -11,6 +11,7 @@ public class SkillResolver(AppDbContext db) : ISkillResolver
         var normalized = names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(Normalize).Distinct().ToList();
         if (normalized.Count > 200 || normalized.Any(n => n.Length > 100)) throw new ArgumentException("Too many skills or skill name too long.");
         var existing = await db.Skills.Where(s => normalized.Contains(s.Name)).ToListAsync();
+        existing.AddRange(db.Skills.Local.Where(s => normalized.Contains(s.Name) && !existing.Any(e => e.Id == s.Id)).ToList());
         foreach (var name in normalized.Except(existing.Select(s => s.Name)))
         {
             var id = Guid.NewGuid();

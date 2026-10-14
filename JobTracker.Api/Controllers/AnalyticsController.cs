@@ -1,5 +1,6 @@
 using JobTracker.Api.Data;
 using JobTracker.Api.Models;
+using JobTracker.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -11,13 +12,15 @@ public class AnalyticsController(AppDbContext db) : ControllerBase
     {
         if (staleDays is < 1 or > 365 || noReplyDays is < 1 or > 365) return BadRequest("Thresholds must be between 1 and 365 days.");
         var now = DateTimeOffset.UtcNow;
-        var apps = await db.Applications.Where(a => a.Status >= ApplicationStatus.Applied && a.Status <= ApplicationStatus.Offered && (a.SnoozedUntil == null || a.SnoozedUntil <= now)).ToListAsync();
+        var apps = await db.Applications.Include(a => a.StageDetails).Where(a => a.Status >= ApplicationStatus.Applied && a.Status <= ApplicationStatus.Offered && (a.SnoozedUntil == null || a.SnoozedUntil <= now)).ToListAsync();
+        var zone = await db.UserProfiles.Select(p => p.TimeZone).FirstOrDefaultAsync() ?? "UTC";
         return Ok(new
         {
             appliedThisWeek = await db.Applications.CountAsync(a => a.Status != ApplicationStatus.Saved && a.AppliedDate >= now.AddDays(-7)),
             stale = apps.Where(a => a.UpdatedAt < now.AddDays(-staleDays)).OrderBy(a => a.UpdatedAt).Select(a => new { a.Id, a.Title, a.Company, daysSinceActivity = (int)(now - a.UpdatedAt).TotalDays }),
             noReply = apps.Where(a => a.LastEmployerResponseAt == null && a.AppliedDate < now.AddDays(-noReplyDays)).OrderBy(a => a.AppliedDate).Select(a => new { a.Id, a.Title, a.Company, daysSinceApplied = (int)(now - a.AppliedDate).TotalDays }),
-            followUps = apps.Where(a => a.FollowUpAt <= now).Select(a => new { a.Id, a.Title, a.Company, a.NextAction, a.FollowUpAt })
+            followUps = apps.Where(a => a.FollowUpAt <= now).Select(a => new { a.Id, a.Title, a.Company, a.NextAction, a.FollowUpAt }),
+            deadlines = apps.SelectMany(a => DeadlineService.Due(a, zone, now).Select(d => new { a.Id, a.Title, a.Company, d.Kind, d.DueAt, d.StageDetailId }))
         });
     }
     [HttpGet("funnel")]

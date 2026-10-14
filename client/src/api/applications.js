@@ -1,74 +1,75 @@
 import { api } from "./client.js";
-
 export async function listApplications() {
-  const { data } = await api.get("/api/applications");
-  return data;
+  const result = [];
+  for (let page = 1; ; page++) {
+    const { data } = await api.get("/api/applications", {
+      params: { page, pageSize: 200 },
+    });
+    result.push(...data);
+    if (data.length < 200) return result;
+  }
 }
-
-export async function createApplication({
-  title,
-  company,
-  jobUrl,
-  rawDescription,
-}) {
-  const { data } = await api.post("/api/applications", {
-    title,
-    company,
-    jobUrl,
-    rawDescription,
-  });
-  return data;
+export async function createApplication(application) {
+  return (await api.post("/api/applications", application)).data;
 }
-
-export async function updateApplicationStatus(id, status) {
-  const { data } = await api.patch(`/api/applications/${id}/status`, {
-    status,
-  });
-  return data;
+export async function editApplication(id, version, application) {
+  return (await api.put(`/api/applications/${id}`, { version, application }))
+    .data;
 }
-
-export async function getApplication(id) {
-  const { data } = await api.get(`/api/applications/${id}`);
-  return data;
+export async function updateApplicationStatus(id, status, version) {
+  return (
+    await api.patch(`/api/applications/${id}/status`, { status, version })
+  ).data;
 }
-
+export async function getApplication(id, signal) {
+  return (await api.get(`/api/applications/${id}`, { signal })).data;
+}
 export async function deleteApplication(id) {
   await api.delete(`/api/applications/${id}`);
 }
-
-// stageDetailId: pass the existing record's id when editing it in place
-// (any stage). Omit — or pass null — to create: for a single-record stage
-// that's the initial save, for InterviewScheduled it's a new round.
 export async function upsertStageDetail(
   id,
   stage,
   fields,
   stageDetailId = null,
+  version = null,
 ) {
-  const { data } = await api.put(`/api/applications/${id}/stage-details`, {
-    stage,
-    fields,
-    stageDetailId,
-  });
-  return data;
+  return (
+    await api.put(`/api/applications/${id}/stage-details`, {
+      stage,
+      fields,
+      stageDetailId,
+      version,
+    })
+  ).data;
 }
-
-export async function getAutomationStatus(id) {
-  const { data } = await api.get(`/api/applications/${id}/automation-status`);
-  return data;
+export async function getAutomationStatus(
+  id,
+  runId,
+  type = "skill_extraction",
+  signal,
+) {
+  return (
+    await api.get(`/api/applications/${id}/automation-status`, {
+      params: { runId, type },
+      signal,
+    })
+  ).data;
 }
-
-export async function generateInterviewQuestions(id, round) {
-  const { data } = await api.post(
-    `/api/applications/${id}/interview-questions`,
-    { round },
-  );
-  return data;
+export async function generateInterviewQuestions(id, stageDetailId) {
+  return (
+    await api.post(`/api/applications/${id}/interview-questions`, {
+      stageDetailId,
+    })
+  ).data;
 }
-
 export async function retrySkillExtraction(id) {
-  const { data } = await api.post(
-    `/api/applications/${id}/retry-skill-extraction`,
-  );
-  return data;
+  return (await api.post(`/api/applications/${id}/retry-skill-extraction`))
+    .data;
+}
+export async function saveFollowUp(id, values) {
+  return (await api.patch(`/api/applications/${id}/follow-up`, values)).data;
+}
+export async function addNote(id, body) {
+  return (await api.post(`/api/applications/${id}/notes`, { body })).data;
 }

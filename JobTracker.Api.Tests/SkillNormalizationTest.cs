@@ -1,58 +1,31 @@
-﻿using JobTracker.Api.Data;
-using JobTracker.Api.Models;
+using JobTracker.Api.Data;
 using JobTracker.Api.Services;
-using JobTracker.Api.Tests;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using Xunit;
-
+namespace JobTracker.Api.Tests;
 public class SkillNormalizationTests
 {
     [Fact]
-    public void TrimsAndLowercasesSkillNames()
+    public async Task ResolverDeduplicatesNormalizedNamesAcrossUncommittedCalls()
     {
-        var input = new List<string> { "  C#  ", "Docker", "docker" };
-
-        var normalized = input
-            .Select(n => n.Trim().ToLowerInvariant())
-            .Where(n => n.Length > 0)
-            .Distinct()
-            .ToList();
-
-        Assert.Equal(2, normalized.Count);
-        Assert.Contains("c#", normalized);
-        Assert.Contains("docker", normalized);
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        var resolver = new SkillResolver(db);
+        var first = await resolver.ResolveSkillsAsync(new() { " Docker ", "DOCKER", " C# " });
+        var second = await resolver.ResolveSkillsAsync(new() { "docker" });
+        Assert.Equal(first.Single(s => s.Name == "docker").Id, second.Single().Id);
+        await db.SaveChangesAsync(); Assert.Equal(2, await db.Skills.CountAsync());
     }
-
-    [Theory]
-    [InlineData(0, true)]
-    [InlineData(9, true)]
-    [InlineData(47, false)]
-    public void ValidatesStatusIsADefinedEnumValue(int status, bool expectedValid)
-    {
-        Assert.Equal(expectedValid, Enum.IsDefined(typeof(ApplicationStatus), status));
-    }
-
     [Fact]
-    public void TokenContainsUserIdAndRoleClaims()
+    public void TokensIncludeRevocationStampAndBoundedExpiry()
     {
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> {
-        {"Jwt:Key", "test-key-at-least-32-characters-long"},
-        {"Jwt:Issuer", "test-issuer"},
-            })
-            .Build();
-
-        var service = new TokenService(config);
-        var user = new IdentityUser<Guid> { Id = Guid.NewGuid(), Email = "test@example.com" };
-
-        var token = service.CreateToken(user, new List<string> { "admin" });
-        var handler = new JwtSecurityTokenHandler();
-        var jwt = handler.ReadJwtToken(token);
-
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> { ["Jwt:Key"] = "test-key-at-least-32-characters-long", ["Jwt:Issuer"] = "test-issuer", ["Jwt:ExpiryMinutes"] = "99999" }).Build();
+        var user = new IdentityUser<Guid> { Id = Guid.NewGuid(), Email = "test@example.test", SecurityStamp = "security-version" };
+        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(new TokenService(config).CreateToken(user, new List<string> { "admin" }));
         Assert.Contains(jwt.Claims, c => c.Type == ClaimTypes.Role && c.Value == "admin");
+        Assert.Contains(jwt.Claims, c => c.Type == "security_stamp" && c.Value == user.SecurityStamp);
+        Assert.True(jwt.ValidTo <= DateTime.UtcNow.AddMinutes(121));
     }
 }

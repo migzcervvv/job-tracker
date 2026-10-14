@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
-import { Layout } from '../../components/Layout.jsx';
-import { getHealth } from '../../api/admin.js';
-import { extractErrorMessage } from '../../api/errors.js';
-import { notify } from '../../notify.js';
+import { useEffect, useState } from "react";
+import { Layout } from "../../components/Layout.jsx";
+import { getHealth } from "../../api/admin.js";
+import { extractErrorMessage } from "../../api/errors.js";
+import { notify } from "../../notify.js";
 
 const STATUS_COLOR = {
-  healthy: 'var(--s-interview)',
-  unreachable: '#e07a6f',
-  not_configured: 'var(--text-dim)',
+  healthy: "var(--s-interview)",
+  unreachable: "#e07a6f",
+  not_configured: "var(--text-dim)",
 };
 
 function formatUptime(seconds) {
@@ -20,15 +20,23 @@ function formatUptime(seconds) {
 }
 
 function HealthCard({ label, status, detail }) {
-  const color = STATUS_COLOR[status] ?? 'var(--text-dim)';
+  const color = STATUS_COLOR[status] ?? "var(--text-dim)";
   return (
     <div className="health-card">
       <div className="health-card-top">
-        <span className="tick" style={{ background: color, width: 8, height: 8, borderRadius: '50%' }} />
+        <span
+          className="tick"
+          style={{
+            background: color,
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+          }}
+        />
         <span className="health-card-label">{label}</span>
       </div>
       <div className="health-card-status" style={{ color }}>
-        {status.replace('_', ' ')}
+        {status.replace("_", " ")}
       </div>
       {detail && <div className="health-card-detail">{detail}</div>}
     </div>
@@ -41,7 +49,9 @@ export function AdminHealth() {
   function refresh() {
     getHealth()
       .then(setHealth)
-      .catch((err) => notify.error('Could not load health status', extractErrorMessage(err)));
+      .catch((err) =>
+        notify.error("Could not load health status", extractErrorMessage(err)),
+      );
   }
 
   useEffect(refresh, []);
@@ -49,14 +59,26 @@ export function AdminHealth() {
   return (
     <Layout
       title="System health"
-      actions={<button className="icon-btn" onClick={refresh}>Refresh</button>}
+      actions={
+        <button className="icon-btn" onClick={refresh}>
+          Refresh
+        </button>
+      }
     >
-      {health === null && <p style={{ color: 'var(--text-dim)' }}>Loading…</p>}
+      {health === null && <p style={{ color: "var(--text-dim)" }}>Loading…</p>}
 
       {health !== null && (
         <div className="health-grid">
-          <HealthCard label="API" status={health.api} detail={`Uptime: ${formatUptime(health.uptimeSeconds)}`} />
-          <HealthCard label="Database" status={health.database} detail="Supabase (session pooler)" />
+          <HealthCard
+            label="API"
+            status={health.api}
+            detail={`Uptime: ${formatUptime(health.uptimeSeconds)}`}
+          />
+          <HealthCard
+            label="Database"
+            status={health.database}
+            detail="Supabase (session pooler)"
+          />
           <HealthCard label="n8n" status={health.n8n} detail="GCP" />
         </div>
       )}

@@ -16,7 +16,7 @@ public class InternalController(AppDbContext db, ISkillResolver resolver) : Cont
     [HttpPut("applications/{id:guid}/skills")]
     public Task<IActionResult> Skills(Guid id, SkillCallback req) => Complete(req.RunId, "skill_extraction", id, null, async run =>
     {
-        if (req.Skills == null || req.Skills.Count > 200 || req.Skills.Any(s => string.IsNullOrWhiteSpace(s.Name) || s.Name.Length > 100 || s.Importance is < 1 or > 3) || !InputValidation.Vector(req.RequirementsEmbedding)) return BadRequest("Invalid skills or 1536-dimensional embedding.");
+        if (req.Skills == null || req.Skills.Count > 200 || req.Skills.Any(s => s == null || string.IsNullOrWhiteSpace(s.Name) || s.Name.Length > 100 || s.Importance is < 1 or > 3) || !InputValidation.Vector(req.RequirementsEmbedding)) return BadRequest("Invalid skills or 1536-dimensional embedding.");
         var app = await db.Applications.IgnoreQueryFilters().FirstOrDefaultAsync(a => a.Id == id && a.UserId == run.UserId);
         if (app == null) return NotFound();
         if (app.ExtractionRunId != run.Id) return Conflict("This run has been replaced.");
@@ -53,7 +53,7 @@ public class InternalController(AppDbContext db, ISkillResolver resolver) : Cont
     public Task<IActionResult> ResumeExtraction(Guid id, ResumeCallback req) => Complete(req.RunId, "resume_extraction", null, id, async run =>
     {
         if (string.IsNullOrWhiteSpace(req.ExtractedText) || req.ExtractedText.Length > 200000 || req.Skills == null || req.Skills.Count > 200 ||
-            req.Skills.Any(s => string.IsNullOrWhiteSpace(s.Name) || s.Name.Length > 100 || s.Evidence?.Length > 5000 || !double.IsFinite(s.Strength) || s.Strength < 0 || s.Strength > 1) ||
+            req.Skills.Any(s => s == null || string.IsNullOrWhiteSpace(s.Name) || s.Name.Length > 100 || s.Evidence?.Length > 5000 || !double.IsFinite(s.Strength) || s.Strength < 0 || s.Strength > 1) ||
             !InputValidation.Vector(req.ResumeEmbedding)) return BadRequest("Invalid extraction or 1536-dimensional embedding.");
         var resume = await db.Resumes.IgnoreQueryFilters().FirstOrDefaultAsync(r => r.Id == id && r.UserId == run.UserId);
         if (resume == null) return NotFound();
@@ -63,10 +63,20 @@ public class InternalController(AppDbContext db, ISkillResolver resolver) : Cont
         resume.ProposedSkillsJson = JsonSerializer.Serialize(req.Skills.GroupBy(s => SkillResolver.Normalize(s.Name))
             .Select(g => new SkillEvidenceDto { Name = g.Key, Evidence = g.OrderByDescending(s => s.Strength).First().Evidence, Strength = g.Max(s => s.Strength) }));
         resume.ExtractionStatus = "succeeded";
+        resume.Version = Guid.NewGuid();
         // A callback never switches the active profile. Activation is a separate user action.
         return Ok(new { resume.Id });
     });
 
+    [HttpPost("runs/{id:guid}/claim")]
+    public async Task<IActionResult> ClaimRun(Guid id)
+    {
+        var run = await db.AutomationRuns.IgnoreQueryFilters().FirstOrDefaultAsync(r => r.Id == id);
+        if (run == null) return NotFound();
+        if (AutomationRun.IsTerminal(run.Status) || run.Status == "running" || run.DeadlineAt <= DateTimeOffset.UtcNow) return Conflict("Run already claimed or no longer active.");
+        run.Status = "running"; run.UpdatedAt = DateTimeOffset.UtcNow; run.Version = Guid.NewGuid();
+        await db.SaveChangesAsync(); return Ok(AutomationService.View(run));
+    }
     [HttpPost("runs/{id:guid}/state")]
     public async Task<IActionResult> State(Guid id, StateCallback req)
     {
@@ -109,7 +119,9 @@ public class InternalController(AppDbContext db, ISkillResolver resolver) : Cont
     {
         var enabled = await db.UserProfiles.IgnoreQueryFilters().Where(p => p.RemindersEnabled).Select(p => p.UserId).ToListAsync();
         var apps = await db.Applications.IgnoreQueryFilters().Include(a => a.StageDetails).Where(a => enabled.Contains(a.UserId) && a.Status >= ApplicationStatus.Applied && a.Status <= ApplicationStatus.Offered).ToListAsync();
-        return Ok(await Recipients(apps.Where(a => a.SnoozedUntil == null || a.SnoozedUntil <= DateTimeOffset.UtcNow), true));
+        var zones = await db.UserProfiles.IgnoreQueryFilters().Where(p => enabled.Contains(p.UserId)).ToDictionaryAsync(p => p.UserId, p => p.TimeZone);
+        var now = DateTimeOffset.UtcNow;
+        return Ok(await Recipients(apps.Where(a => (a.SnoozedUntil == null || a.SnoozedUntil <= now) && DeadlineService.Due(a, zones.GetValueOrDefault(a.UserId, "UTC"), now).Count > 0), true));
     }
     [HttpGet("digest/weekly")]
     public async Task<IActionResult> Digest()
@@ -134,7 +146,7 @@ public class InternalController(AppDbContext db, ISkillResolver resolver) : Cont
             applications = g.Select(a => new { a.Id, a.Title, a.Company, a.NextAction, a.FollowUpAt,
                 daysSinceActivity = (int)(DateTimeOffset.UtcNow - a.UpdatedAt).TotalDays,
                 deliveryKey = $"{(deadlines ? "deadline" : "stale")}:{a.Id}:{DateTimeOffset.UtcNow:yyyy-MM-dd}",
-                stageDetails = deadlines ? a.StageDetails.Select(s => new { s.Stage, s.FieldsJson }) : null }) });
+                deadlines = deadlines ? DeadlineService.Due(a, zones.GetValueOrDefault(a.UserId, "UTC"), DateTimeOffset.UtcNow) : null }) });
     }
     public record SkillCallback(Guid RunId, List<SkillImportanceDto> Skills, float[]? RequirementsEmbedding);
     public record QuestionsCallback(Guid RunId, Guid StageDetailId, string Questions);

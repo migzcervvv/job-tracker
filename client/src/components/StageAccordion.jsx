@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { STATUS, statusMeta } from "../api/statusMeta.js";
 import { STAGE_FIELDS } from "../api/stageFields.js";
 import { relativeTime } from "../api/dates.js";
+import { dateOnlyLabel } from "../api/datetime.js";
 import { StageDetailForm } from "./StageDetailForm.jsx";
 
 const AI_QUESTIONS_MARKER = "--- Suggested questions ---";
@@ -79,15 +80,7 @@ function FieldValueDisplay({ field, value }) {
     );
   }
   if (field.type === "date") {
-    return (
-      <span>
-        {new Date(value).toLocaleDateString(undefined, {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        })}
-      </span>
-    );
+    return <span>{dateOnlyLabel(value)}</span>;
   }
   if (field.type === "datetime-local") {
     return (
@@ -144,8 +137,9 @@ function StageFieldGrid({ stage, fields, excludeKeys = [] }) {
   );
 }
 
-function InterviewRoundView({ fields }) {
+function InterviewRoundView({ fields, generatedQuestions }) {
   const { userNotes, aiBlocks } = splitPrepNotes(fields.prepNotes);
+  if (generatedQuestions) aiBlocks.push(generatedQuestions);
 
   return (
     <>
@@ -275,12 +269,16 @@ export function StageAccordion({
                   onSaved={handleSaved}
                   appendsNewRound={Boolean(entry.isNewRound)}
                   stageDetailId={entry.record?.id ?? null}
+                  version={entry.record?.version ?? null}
                   onCancel={entry.record ? () => setMode("view") : null}
                 />
               ) : (
                 <>
                   {isInterview ? (
-                    <InterviewRoundView fields={fields} />
+                    <InterviewRoundView
+                      fields={fields}
+                      generatedQuestions={entry.record?.generatedQuestions}
+                    />
                   ) : (
                     <StageFieldGrid stage={entry.stage} fields={fields} />
                   )}
@@ -299,18 +297,14 @@ export function StageAccordion({
                 </>
               )}
 
-              {entry.isNewRound && onGenerateQuestions && (
+              {isInterview && entry.record && onGenerateQuestions && (
                 <div className="stage-accordion-content-actions">
                   <button
                     type="button"
                     className="icon-btn stage-accordion-generate"
-                    onClick={() =>
-                      onGenerateQuestions(
-                        entry.roundLabel.replace("Round ", ""),
-                      )
-                    }
+                    onClick={() => onGenerateQuestions(entry.record.id)}
                     disabled={generatingRound !== null}
-                    title="Generates likely questions from this job description and your resume, into Prep notes"
+                    title="Generates questions for this saved interview round"
                   >
                     {generatingRound !== null
                       ? "Working…"

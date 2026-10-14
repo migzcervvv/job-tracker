@@ -1,33 +1,23 @@
 import { api } from "./client.js";
-
 export async function getMySkills() {
-  const { data } = await api.get("/api/me/skills");
-  return data; // [{ name, level }]
+  return (await api.get("/api/me/skills")).data;
 }
-
-export async function setMySkills(skillNames) {
-  const { data } = await api.put("/api/me/skills", { skillNames });
-  return data; // [{ name, level }]
+export async function addMySkill(name) {
+  return (await api.post("/api/me/skills", { skillNames: [name] })).data;
 }
-
+export async function removeMySkill(name) {
+  await api.delete("/api/me/skills/" + encodeURIComponent(name));
+}
 export async function setSkillLevel(name, level) {
-  const { data } = await api.put("/api/me/skills/level", { name, level });
-  return data; // { name, level }
+  return (await api.put("/api/me/skills/level", { name, level })).data;
 }
-
-export async function getApplicationSkills(applicationId) {
-  const { data } = await api.get(`/api/applications/${applicationId}/skills`);
-  return data;
+export async function getApplicationSkills(id) {
+  return (await api.get(`/api/applications/${id}/skills`)).data;
 }
-
-export async function setApplicationSkills(applicationId, skillNames) {
-  const { data } = await api.put(`/api/applications/${applicationId}/skills`, {
-    skillNames,
-  });
-  return data;
+export async function setApplicationSkills(id, skills, version) {
+  return (await api.put(`/api/applications/${id}/skills`, { skills, version }))
+    .data;
 }
-
 export async function getSkillsGap() {
-  const { data } = await api.get("/api/analytics/skills-gap");
-  return data.skills;
+  return (await api.get("/api/analytics/skills-gap")).data;
 }

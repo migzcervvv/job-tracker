@@ -68,45 +68,48 @@ export default function App() {
     <BrowserRouter>
       <GooeyToaster position="top-center" theme="dark" />
       <HealthGate>
-      <AuthProvider>
-        <Suspense fallback={<RouteFallback />}>
-          <Routes>
-            <Route path="/login" element={<Login />} />
+        <AuthProvider>
+          <Suspense fallback={<RouteFallback />}>
+            <Routes>
+              <Route path="/login" element={<Login />} />
 
-            <Route element={<ProtectedRoute />}>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/applications/new" element={<NewApplication />} />
-              <Route path="/applications/:id" element={<ApplicationDetail />} />
-              <Route path="/alerts" element={<Alerts />} />
-              <Route path="/skills-gap" element={<SkillsGap />} />
-              <Route path="/skills" element={<MySkills />} />
-              <Route path="/resume" element={<ResumeManager />} />
-              {/* Old paths kept as redirects so existing bookmarks don't 404. */}
-              <Route
-                path="/settings"
-                element={<Navigate to="/skills" replace />}
-              />
-              <Route
-                path="/skills-resume"
-                element={<Navigate to="/skills" replace />}
-              />
-              <Route path="/profile" element={<Profile />} />
-
-              <Route element={<AdminRoute />}>
-                <Route path="/admin/users" element={<AdminUsers />} />
-                <Route path="/admin/skills" element={<AdminSkills />} />
-                <Route path="/admin/health" element={<AdminHealth />} />
+              <Route element={<ProtectedRoute />}>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/applications/new" element={<NewApplication />} />
                 <Route
-                  path="/admin/automation"
-                  element={<AdminAutomationLog />}
+                  path="/applications/:id"
+                  element={<ApplicationDetail />}
                 />
-              </Route>
-            </Route>
+                <Route path="/alerts" element={<Alerts />} />
+                <Route path="/skills-gap" element={<SkillsGap />} />
+                <Route path="/skills" element={<MySkills />} />
+                <Route path="/resume" element={<ResumeManager />} />
+                {/* Old paths kept as redirects so existing bookmarks don't 404. */}
+                <Route
+                  path="/settings"
+                  element={<Navigate to="/skills" replace />}
+                />
+                <Route
+                  path="/skills-resume"
+                  element={<Navigate to="/skills" replace />}
+                />
+                <Route path="/profile" element={<Profile />} />
 
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Suspense>
-      </AuthProvider>
+                <Route element={<AdminRoute />}>
+                  <Route path="/admin/users" element={<AdminUsers />} />
+                  <Route path="/admin/skills" element={<AdminSkills />} />
+                  <Route path="/admin/health" element={<AdminHealth />} />
+                  <Route
+                    path="/admin/automation"
+                    element={<AdminAutomationLog />}
+                  />
+                </Route>
+              </Route>
+
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
+        </AuthProvider>
       </HealthGate>
     </BrowserRouter>
   );

@@ -1,0 +1,10 @@
+project_id               = "YOUR_GCP_PROJECT"
+region                   = "asia-east1"
+n8n_image                = "docker.n8n.io/n8nio/n8n@sha256:REPLACE_WITH_VERIFIED_DIGEST"
+database_host            = "YOUR_N8N_POSTGRES_HOST"
+database_name            = "n8n"
+database_user            = "n8n"
+database_password_secret = "n8n-database-password"
+encryption_key_secret    = "n8n-encryption-key"
+webhook_url              = "https://YOUR_N8N_HOST/"
+allow_public_access      = false

@@ -1,54 +1,45 @@
 import { api } from "./client.js";
-
 export async function listResumes() {
-  const { data } = await api.get("/api/resumes");
-  return data;
+  return (await api.get("/api/resumes")).data;
 }
-
 export async function uploadResume(file) {
   const form = new FormData();
   form.append("file", file);
-  const { data } = await api.post("/api/resumes", form, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
-  return data;
+  return (await api.post("/api/resumes", form, { timeout: 60000 })).data;
 }
-
 export async function getResumeDownloadUrl(id) {
   const { data } = await api.get(`/api/resumes/${id}/download`);
-  return data.url;
+  if (!data.demo) return data.url;
+  return URL.createObjectURL(
+    (await api.get(`/api/resumes/${id}/content`, { responseType: "blob" }))
+      .data,
+  );
 }
-
 export async function deleteResume(id) {
   await api.delete(`/api/resumes/${id}`);
 }
-
-// Polled while n8n extraction runs.
-// -> { status, message, createdAt }
-export async function getResumeAutomationStatus(id) {
-  const { data } = await api.get(`/api/resumes/${id}/automation-status`);
-  return data;
+export async function activateResume(id) {
+  return (await api.post(`/api/resumes/${id}/activate`)).data;
 }
-
-// -> { extractionStatus, proposedSkills: [{ name, evidence, strength, alreadyClaimed }] }
+export async function getResumeAutomationStatus(id, runId, signal) {
+  return (
+    await api.get(`/api/resumes/${id}/automation-status`, {
+      params: { runId },
+      signal,
+    })
+  ).data;
+}
 export async function getProposedSkills(id) {
-  const { data } = await api.get(`/api/resumes/${id}/proposed-skills`);
-  return data;
+  return (await api.get(`/api/resumes/${id}/proposed-skills`)).data;
 }
-
-// Commits only the names passed — the confirm gate.
-export async function confirmResumeSkills(id, skillNames) {
-  const { data } = await api.post(`/api/resumes/${id}/confirm-skills`, {
-    skillNames,
-  });
-  return data;
+export async function confirmResumeSkills(id, skillNames, runId) {
+  return (
+    await api.post(`/api/resumes/${id}/confirm-skills`, { skillNames, runId })
+  ).data;
 }
-
-export async function dismissProposedSkills(id) {
-  await api.post(`/api/resumes/${id}/dismiss-skills`);
+export async function dismissProposedSkills(id, runId) {
+  await api.post(`/api/resumes/${id}/dismiss-skills`, { runId });
 }
-
 export async function retryResumeExtraction(id) {
-  const { data } = await api.post(`/api/resumes/${id}/retry-extraction`);
-  return data;
+  return (await api.post(`/api/resumes/${id}/retry-extraction`)).data;
 }

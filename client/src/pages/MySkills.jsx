@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Layout } from "../components/Layout.jsx";
 import { SkillLevelEditor } from "../components/SkillLevelEditor.jsx";
-import { getMySkills, setMySkills, setSkillLevel } from "../api/skills.js";
+import {
+  getMySkills,
+  addMySkill,
+  removeMySkill,
+  setSkillLevel,
+} from "../api/skills.js";
 import { extractErrorMessage } from "../api/errors.js";
 import { notify } from "../notify.js";
 import { useApplications } from "../state/ApplicationsContext.jsx";
@@ -11,16 +16,18 @@ export function MySkills() {
   const [skills, setSkills] = useState(null);
 
   useEffect(() => {
-    loadSkills();
-  }, []);
-
-  function loadSkills() {
+    let cancelled = false;
     getMySkills()
-      .then(setSkills)
+      .then((data) => {
+        if (!cancelled) setSkills(data);
+      })
       .catch((err) =>
         notify.error("Could not load skills", extractErrorMessage(err)),
       );
-  }
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const stats = useMemo(() => {
     const list = skills ?? [];
@@ -42,36 +49,37 @@ export function MySkills() {
   }
 
   async function handleAdd(name) {
-    const names = [...(skills ?? []).map((s) => s.name), name];
-    const updated = await setMySkills(names);
-    setSkills(updated);
+    const updated = await addMySkill(name);
+    const added = updated.find((s) => s.name === name.trim().toLowerCase());
+    if (added)
+      setSkills((previous) => [
+        ...(previous ?? []).filter((s) => s.name !== added.name),
+        added,
+      ]);
     refreshFitScores();
   }
 
   async function handleRemove(name) {
-    const names = (skills ?? [])
-      .filter((s) => s.name !== name)
-      .map((s) => s.name);
-    const updated = await setMySkills(names);
-    setSkills(updated);
+    await removeMySkill(name);
+    setSkills((previous) => (previous ?? []).filter((s) => s.name !== name));
     refreshFitScores();
   }
 
   async function handleLevelChange(name, level) {
     const updated = await setSkillLevel(name, level);
     setSkills((prev) =>
-      (prev ?? []).map((s) => (s.name === updated.name ? updated : s)),
+      (prev ?? []).map((s) =>
+        s.name === updated.name ? { ...s, ...updated } : s,
+      ),
     );
-    refreshFitScores();
   }
 
   return (
     <Layout title="My skills">
       <p className="skills-page-hint">
-        Feeds the Skills Gap view and the fit score on every application. Rate
-        each skill honestly — both read off these levels, not just whether a
-        skill is listed. Skills picked up from a resume land here too, once you
-        confirm them on the Resume page.
+        Claimed skills feed Skills Gap and weighted fit. Proficiency ratings are
+        personal notes; they do not change either calculation. Resume skills are
+        added only after confirmation. Evidence remains attached to each skill.
       </p>
 
       {skills !== null && skills.length > 0 && (

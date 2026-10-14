@@ -21,7 +21,11 @@ public class SkillsController(AppDbContext db, ISkillResolver resolver) : Contro
         if (!ValidNames(req.SkillNames)) return BadRequest("Invalid skill names.");
         var skills = await resolver.ResolveSkillsAsync(req.SkillNames);
         var existing = await db.UserSkills.Select(s => s.SkillId).ToListAsync();
-        foreach (var skill in skills.Where(s => !existing.Contains(s.Id))) db.UserSkills.Add(new UserSkill { UserId = UserId, SkillId = skill.Id });
+        foreach (var skill in skills.Where(s => !existing.Contains(s.Id)))
+        {
+            if (db.Database.IsNpgsql()) await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"UserSkills\" (\"UserId\", \"SkillId\", \"Level\", \"EvidenceStrength\") VALUES ({UserId}, {skill.Id}, 0, 0) ON CONFLICT (\"UserId\", \"SkillId\") DO NOTHING");
+            else db.UserSkills.Add(new UserSkill { UserId = UserId, SkillId = skill.Id });
+        }
         await db.SaveChangesAsync(); return await MySkills();
     }
     [HttpDelete("me/skills/{name}")]
@@ -53,7 +57,7 @@ public class SkillsController(AppDbContext db, ISkillResolver resolver) : Contro
     [HttpPut("applications/{id:guid}/skills")]
     public async Task<IActionResult> SetRequired(Guid id, RequiredSkillsRequest req)
     {
-        if (req.Skills == null || req.Skills.Count > 200 || req.Skills.Any(s => string.IsNullOrWhiteSpace(s.Name) || s.Name.Length > 100 || s.Importance is < 1 or > 3)) return BadRequest("Invalid skills or importance.");
+        if (req.Skills == null || req.Skills.Count > 200 || req.Skills.Any(s => s == null || string.IsNullOrWhiteSpace(s.Name) || s.Name.Length > 100 || s.Importance is < 1 or > 3)) return BadRequest("Invalid skills or importance.");
         var app = await db.Applications.FirstOrDefaultAsync(a => a.Id == id);
         if (app == null) return NotFound();
         if (app.Version != req.Version) return Conflict("Requirements changed. Reload before saving.");

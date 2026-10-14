@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Layout } from "../components/Layout.jsx";
 import { ResumeUpload } from "../components/ResumeUpload.jsx";
 import { ResumeExtractionModal } from "../components/ResumeExtractionModal.jsx";
@@ -7,140 +7,124 @@ import {
   getResumeDownloadUrl,
   deleteResume,
   retryResumeExtraction,
+  activateResume,
 } from "../api/resumes.js";
 import { extractErrorMessage } from "../api/errors.js";
-import { formatBytes } from "../api/format.js";
 import { notify } from "../notify.js";
 import { useApplications } from "../state/ApplicationsContext.jsx";
-
 export function ResumeManager() {
-  const { refresh: refreshApplications } = useApplications();
-  const [resumes, setResumes] = useState(null);
-  const [extractingResume, setExtractingResume] = useState(null);
-  const [retryingId, setRetryingId] = useState(null);
-
+  const { refresh } = useApplications();
+  const [resumes, setResumes] = useState([]);
+  const [review, setReview] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => setResumes(await listResumes()), []);
   useEffect(() => {
-    loadResumes();
+    let cancelled = false;
+    let timer;
+    async function check() {
+      try {
+        const rows = await listResumes();
+        if (!cancelled) setResumes(rows);
+      } catch (err) {
+        if (!cancelled)
+          notify.error("Could not load resumes", extractErrorMessage(err));
+      }
+      if (!cancelled) timer = setTimeout(check, 10000);
+    }
+    void check();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, []);
-
-  function loadResumes() {
-    listResumes()
-      .then(setResumes)
-      .catch((err) =>
-        notify.error("Could not load resumes", extractErrorMessage(err)),
-      );
-  }
-
-  function handleResumeUploaded(resume) {
-    setResumes((prev) => [resume, ...(prev ?? [])]);
-    setExtractingResume(resume);
-  }
-
-  function handleModalClosed() {
-    setExtractingResume(null);
-    loadResumes();
-  }
-
-  function handleSkillsConfirmed() {
-    // Newly confirmed skills shift every application's fit score — refresh
-    // the board in the background so it's not stale next time it's opened.
-    refreshApplications().catch(() => {});
-  }
-
-  async function handleDownload(id) {
+  async function mutate(action) {
+    setBusy(true);
     try {
-      const url = await getResumeDownloadUrl(id);
-      window.open(url, "_blank", "noreferrer");
+      await action();
+      await load();
+      await refresh();
+    } catch (err) {
+      notify.error("Resume operation failed", extractErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function download(resume) {
+    try {
+      const url = await getResumeDownloadUrl(resume.id);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.target = "_blank";
+      anchor.rel = "noreferrer";
+      anchor.download = resume.fileName;
+      anchor.click();
+      if (url.startsWith("blob:"))
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (err) {
       notify.error("Could not open resume", extractErrorMessage(err));
     }
   }
-
-  async function handleDelete(id) {
-    try {
-      await deleteResume(id);
-      setResumes((prev) => prev.filter((r) => r.id !== id));
-      notify.success("Resume deleted");
-    } catch (err) {
-      notify.error("Could not delete resume", extractErrorMessage(err));
-    }
-  }
-
-  async function handleRetryExtraction(resume) {
-    setRetryingId(resume.id);
-    try {
-      await retryResumeExtraction(resume.id);
-      notify.info("Retrying extraction…", "This can take a few seconds.");
-      loadResumes();
-      setExtractingResume({ ...resume, extractionStatus: "triggered" });
-    } catch (err) {
-      notify.error("Could not retry extraction", extractErrorMessage(err));
-    } finally {
-      setRetryingId(null);
-    }
-  }
-
   return (
     <Layout title="Resume">
-      <p
-        style={{
-          color: "var(--text-dim)",
-          fontSize: 13,
-          marginTop: 0,
-          marginBottom: 16,
-        }}
-      >
-        Uploading a resume reads skills out of it automatically. Nothing is
-        added to your profile until you review and confirm it on the extraction
-        screen — confirmed skills show up on the My Skills page.
+      <p>
+        Select an active resume after extraction. Each application can retain a
+        different submitted file.
       </p>
-      <ResumeUpload onUploaded={handleResumeUploaded} />
-
-      {resumes === null && <p style={{ color: "var(--text-dim)" }}>Loading…</p>}
-      {resumes !== null && resumes.length === 0 && (
-        <p style={{ color: "var(--text-dim)", fontSize: 13 }}>
-          No resumes uploaded yet.
-        </p>
-      )}
-      {resumes !== null && resumes.length > 0 && (
-        <div className="resume-list">
-          {resumes.map((r) => (
-            <div className="resume-row" key={r.id}>
-              <span className="name">{r.fileName}</span>
-              {r.extractionStatus === "failed" && (
-                <button
-                  className="pending-chip"
-                  onClick={() => handleRetryExtraction(r)}
-                  disabled={retryingId === r.id}
-                >
-                  {retryingId === r.id ? "Retrying…" : "Retry extraction"}
-                </button>
-              )}
-              {r.extractionStatus === "triggered" && (
-                <span className="size">Extracting…</span>
-              )}
-              {r.proposedSkillCount > 0 && (
-                <button
-                  className="pending-chip"
-                  onClick={() => setExtractingResume(r)}
-                >
-                  {r.proposedSkillCount} to review
-                </button>
-              )}
-              <span className="size">{formatBytes(r.sizeBytes)}</span>
-              <div className="row-actions">
-                <button onClick={() => handleDownload(r.id)}>Open</button>
-                <button onClick={() => handleDelete(r.id)}>Delete</button>
-              </div>
+      <ResumeUpload
+        onUploaded={(resume) => {
+          setResumes((prev) => [resume, ...prev]);
+          setReview(resume);
+        }}
+      />
+      <div className="resume-list">
+        {resumes.map((resume) => (
+          <div className="resume-row" key={resume.id}>
+            <span className="name">{resume.fileName}</span>
+            <span>
+              {resume.extractionStatus ?? "Not extracted"}
+              {resume.isActive ? " · Active" : ""}
+            </span>
+            <div className="row-actions">
+              <button disabled={busy} onClick={() => setReview(resume)}>
+                Review / status
+              </button>
+              <button disabled={busy} onClick={() => void download(resume)}>
+                Open
+              </button>
+              <button
+                disabled={busy || resume.extractionStatus !== "succeeded"}
+                onClick={() => void mutate(() => activateResume(resume.id))}
+              >
+                Use as active
+              </button>
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void mutate(async () => {
+                    const run = await retryResumeExtraction(resume.id);
+                    setReview({ ...resume, runId: run.runId });
+                  })
+                }
+              >
+                Extract again
+              </button>
+              <button
+                disabled={busy}
+                onClick={() => void mutate(() => deleteResume(resume.id))}
+              >
+                Delete
+              </button>
             </div>
-          ))}
-        </div>
-      )}
-
+          </div>
+        ))}
+      </div>
       <ResumeExtractionModal
-        resume={extractingResume}
-        onClose={handleModalClosed}
-        onSkillsConfirmed={handleSkillsConfirmed}
+        resume={review}
+        onClose={() => {
+          setReview(null);
+          void load().catch(() => {});
+        }}
+        onSkillsConfirmed={() => void refresh().catch(() => {})}
       />
     </Layout>
   );

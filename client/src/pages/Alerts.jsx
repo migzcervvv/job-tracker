@@ -1,13 +1,16 @@
-import { useEffect, useState } from 'react';
-import { Layout } from '../components/Layout.jsx';
-import { getPipelineAlerts } from '../api/analytics.js';
-import { extractErrorMessage } from '../api/errors.js';
-import { notify } from '../notify.js';
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { Layout } from "../components/Layout.jsx";
+import { getPipelineAlerts } from "../api/analytics.js";
+import { extractErrorMessage } from "../api/errors.js";
+import { notify } from "../notify.js";
 
 function AlertList({ title, hint, items, emptyText, unit }) {
   return (
     <div className="panel alert-panel">
-      <div className="section-label" style={{ marginBottom: 4 }}>{title}</div>
+      <div className="section-label" style={{ marginBottom: 4 }}>
+        {title}
+      </div>
       <p className="alert-hint">{hint}</p>
 
       {items.length === 0 ? (
@@ -15,13 +18,24 @@ function AlertList({ title, hint, items, emptyText, unit }) {
       ) : (
         <ul className="alert-list">
           {items.map((a) => (
-            <li className="alert-row" key={a.id}>
+            <li
+              className="alert-row"
+              key={a.id + ":" + (a.stageDetailId ?? a.kind ?? "alert")}
+            >
               <div className="alert-row-main">
-                <span className="alert-title">{a.title}</span>
-                <span className="alert-company">{a.company || 'No company set'}</span>
+                <Link className="alert-title" to={`/applications/${a.id}`}>
+                  {a.title}
+                </Link>
+                <span className="alert-company">
+                  {a.company || "No company set"}
+                </span>
               </div>
               <span className="alert-age">
-                {a.daysSinceActivity ?? a.daysSinceApplied}
+                {a.dueAt
+                  ? new Date(a.dueAt).toLocaleString()
+                  : a.followUpAt
+                    ? new Date(a.followUpAt).toLocaleString()
+                    : (a.daysSinceActivity ?? a.daysSinceApplied)}
                 {unit}
               </span>
             </li>
@@ -40,21 +54,35 @@ export function Alerts() {
   useEffect(() => {
     let cancelled = false;
     getPipelineAlerts({ staleDays, noReplyDays })
-      .then((d) => { if (!cancelled) setData(d); })
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
       .catch((err) => {
-        if (!cancelled) notify.error('Could not load alerts', extractErrorMessage(err));
+        if (!cancelled)
+          notify.error("Could not load alerts", extractErrorMessage(err));
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [staleDays, noReplyDays]);
 
   return (
     <Layout title="Alerts">
-      <p style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 0, marginBottom: 20, maxWidth: 640 }}>
-        Where your pipeline is going quiet. Terminal applications (rejected, withdrawn,
-        archived, decided) are excluded — this only surfaces things still theoretically alive.
+      <p
+        style={{
+          color: "var(--text-dim)",
+          fontSize: 13,
+          marginTop: 0,
+          marginBottom: 20,
+          maxWidth: 640,
+        }}
+      >
+        Where your pipeline is going quiet. Terminal applications (rejected,
+        withdrawn, archived, decided) are excluded — this only surfaces things
+        still theoretically alive.
       </p>
 
-      {data === null && <p style={{ color: 'var(--text-dim)' }}>Loading…</p>}
+      {data === null && <p style={{ color: "var(--text-dim)" }}>Loading…</p>}
 
       {data !== null && (
         <>
@@ -64,13 +92,23 @@ export function Alerts() {
               <div className="stat-label">applied this week</div>
             </div>
             <div className="stat-card">
-              <div className="stat-value" style={{ color: data.stale.length > 0 ? 'var(--s-pending)' : undefined }}>
+              <div
+                className="stat-value"
+                style={{
+                  color: data.stale.length > 0 ? "var(--s-pending)" : undefined,
+                }}
+              >
                 {data.stale.length}
               </div>
               <div className="stat-label">no activity in {staleDays}d</div>
             </div>
             <div className="stat-card">
-              <div className="stat-value" style={{ color: data.noReply.length > 0 ? '#e07a6f' : undefined }}>
+              <div
+                className="stat-value"
+                style={{
+                  color: data.noReply.length > 0 ? "#e07a6f" : undefined,
+                }}
+              >
                 {data.noReply.length}
               </div>
               <div className="stat-label">no reply in {noReplyDays}d</div>
@@ -80,7 +118,10 @@ export function Alerts() {
           <div className="threshold-row">
             <label>
               Stale after
-              <select value={staleDays} onChange={(e) => setStaleDays(Number(e.target.value))}>
+              <select
+                value={staleDays}
+                onChange={(e) => setStaleDays(Number(e.target.value))}
+              >
                 <option value={3}>3 days</option>
                 <option value={7}>7 days</option>
                 <option value={14}>14 days</option>
@@ -89,7 +130,10 @@ export function Alerts() {
             </label>
             <label>
               No reply after
-              <select value={noReplyDays} onChange={(e) => setNoReplyDays(Number(e.target.value))}>
+              <select
+                value={noReplyDays}
+                onChange={(e) => setNoReplyDays(Number(e.target.value))}
+              >
                 <option value={30}>30 days</option>
                 <option value={60}>60 days</option>
                 <option value={90}>90 days</option>
@@ -99,15 +143,29 @@ export function Alerts() {
 
           <div className="alert-grid">
             <AlertList
+              title="Deadlines"
+              hint="Assessment, interview and offer deadlines within a day, including overdue deadlines from the past week."
+              items={data.deadlines ?? []}
+              emptyText="No deadlines due."
+              unit=""
+            />
+            <AlertList
+              title="Follow-ups due"
+              hint="Next actions ready for follow-up."
+              items={data.followUps ?? []}
+              emptyText="No follow-ups due."
+              unit=""
+            />
+            <AlertList
               title="Going quiet"
-              hint="Active applications with no timeline event — status change, note, anything — in the window above."
+              hint="Active applications without recent user activity. Automation is excluded."
               items={data.stale}
               emptyText="Nothing stale. Every active application has moved recently."
               unit="d"
             />
             <AlertList
               title="Never heard back"
-              hint="Nothing at all has happened since you first logged these. Good candidates to follow up on or archive."
+              hint="No employer response has been recorded. Notes and generated questions do not count as replies."
               items={data.noReply}
               emptyText="No silent applications past the threshold."
               unit="d"

@@ -34,7 +34,7 @@ public class FitScorer(AppDbContext db) : IFitScorer
 
         var result = new Dictionary<Guid, FitBreakdown>();
         var byApplication = links.ToLookup(l => l.ApplicationId);
-        var resumes = await db.Resumes.Where(r => r.UserId == userId).ToDictionaryAsync(r => r.Id);
+        var resumes = await db.Resumes.AsNoTracking().Where(r => r.UserId == userId).Select(r => new { r.Id, r.Embedding }).ToDictionaryAsync(r => r.Id);
 
         foreach (var app in apps)
         {
@@ -43,9 +43,9 @@ public class FitScorer(AppDbContext db) : IFitScorer
 
             // Weight by importance: missing a must-have hurts more than
             // missing a nice-to-have. Weight 1..3 maps directly.
-            var totalWeight = required.Sum(r => Math.Max(r.Importance, 1));
+            var totalWeight = required.Sum(r => Math.Clamp(r.Importance, 1, 3));
             var matchedWeight = required.Where(r => mySkillIds.Contains(r.SkillId))
-                                        .Sum(r => Math.Max(r.Importance, 1));
+                                        .Sum(r => Math.Clamp(r.Importance, 1, 3));
             var skillMatch = (int)Math.Round(100.0 * matchedWeight / totalWeight);
 
             int? semantic = null;
@@ -53,9 +53,8 @@ public class FitScorer(AppDbContext db) : IFitScorer
             if (resumeEmbedding is not null && app.RequirementsEmbedding is not null)
             {
                 var sim = CosineSimilarity(resumeEmbedding.ToArray(), app.RequirementsEmbedding.ToArray());
-                // Cosine over text embeddings rarely drops below ~0.3 even for
-                // unrelated documents, so rescale 0.3-0.9 onto 0-100 instead of
-                // reporting the raw value, which would make everything look great.
+                // This fixed 0.3-0.9 rescaling is a display heuristic, not a
+                // calibrated probability or a guaranteed embedding distribution.
                 semantic = (int)Math.Round(Math.Clamp((sim - 0.3) / 0.6, 0, 1) * 100);
             }
 

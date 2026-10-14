@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Layout } from '../components/Layout.jsx';
-import { getSkillsGap } from '../api/skills.js';
-import { extractErrorMessage } from '../api/errors.js';
-import { notify } from '../notify.js';
+import { useEffect, useMemo, useState } from "react";
+import { Layout } from "../components/Layout.jsx";
+import { getSkillsGap } from "../api/skills.js";
+import { extractErrorMessage } from "../api/errors.js";
+import { notify } from "../notify.js";
 
 // Importance is 1-3 from the JD extraction (nice-to-have → required).
 // Weighting by it means "required everywhere" outranks "mentioned often
 // but always optional", which raw frequency alone can't distinguish.
-const IMPORTANCE_LABEL = { 3: 'required', 2: 'preferred', 1: 'nice to have' };
+const IMPORTANCE_LABEL = { 3: "required", 2: "preferred", 1: "nice to have" };
 
 function weightedScore(item) {
   const imp = item.avgImportance ?? 2;
@@ -17,18 +17,28 @@ function weightedScore(item) {
 function RankedList({ title, hint, items, tone, mode }) {
   return (
     <div className="panel skill-panel">
-      <div className="section-label" style={{ marginBottom: 4 }}>{title}</div>
-      <p style={{ margin: '0 0 14px', fontSize: 12, color: 'var(--text-dim)' }}>{hint}</p>
+      <div className="section-label" style={{ marginBottom: 4 }}>
+        {title}
+      </div>
+      <p style={{ margin: "0 0 14px", fontSize: 12, color: "var(--text-dim)" }}>
+        {hint}
+      </p>
 
       {items.length === 0 && (
-        <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>Nothing here yet.</p>
+        <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
+          Nothing here yet.
+        </p>
       )}
 
       {items.map((item) => {
-        const display = mode === 'trend'
-          ? `${item.trend > 0 ? '+' : ''}${item.trend}pt`
-          : `${item.frequency}%`;
-        const width = Math.min(Math.abs(mode === 'trend' ? item.trend : item.frequency), 100);
+        const display =
+          mode === "trend"
+            ? `${item.trend > 0 ? "+" : ""}${item.trend}pt`
+            : `${item.frequency}%`;
+        const width = Math.min(
+          Math.abs(mode === "trend" ? item.trend : item.frequency),
+          100,
+        );
         const impLabel = IMPORTANCE_LABEL[Math.round(item.avgImportance ?? 0)];
 
         return (
@@ -36,14 +46,21 @@ function RankedList({ title, hint, items, tone, mode }) {
             <div className="skill-row-top">
               <span className="skill-name">
                 {item.name}
-                {impLabel && mode !== 'trend' && (
-                  <span className={`imp-tag imp-${Math.round(item.avgImportance)}`}>{impLabel}</span>
+                {impLabel && mode !== "trend" && (
+                  <span
+                    className={`imp-tag imp-${Math.round(item.avgImportance)}`}
+                  >
+                    {impLabel}
+                  </span>
                 )}
               </span>
               <span className="skill-value">{display}</span>
             </div>
             <div className="skill-bar-track">
-              <div className="skill-bar-fill" style={{ width: `${width}%`, background: tone }} />
+              <div
+                className="skill-bar-fill"
+                style={{ width: `${width}%`, background: tone }}
+              />
             </div>
           </div>
         );
@@ -54,11 +71,17 @@ function RankedList({ title, hint, items, tone, mode }) {
 
 export function SkillsGap() {
   const [skills, setSkills] = useState(null);
+  const [coverage, setCoverage] = useState(null);
 
   useEffect(() => {
     getSkillsGap()
-      .then(setSkills)
-      .catch((err) => notify.error('Could not load skills gap', extractErrorMessage(err)));
+      .then((data) => {
+        setSkills(data.skills);
+        setCoverage(data);
+      })
+      .catch((err) =>
+        notify.error("Could not load skills gap", extractErrorMessage(err)),
+      );
   }, []);
 
   const { gaps, strengths, rising, fading } = useMemo(() => {
@@ -67,28 +90,56 @@ export function SkillsGap() {
       // Gaps rank by weighted score, not raw frequency — a skill that's
       // hard-required in half your applications matters more than one
       // that's nice-to-have in most of them.
-      gaps: [...list].filter((s) => !s.iHaveIt).sort((a, b) => weightedScore(b) - weightedScore(a)).slice(0, 6),
-      strengths: [...list].filter((s) => s.iHaveIt).sort((a, b) => weightedScore(b) - weightedScore(a)).slice(0, 6),
-      rising: [...list].filter((s) => s.trend > 0).sort((a, b) => b.trend - a.trend).slice(0, 5),
-      fading: [...list].filter((s) => s.trend < 0).sort((a, b) => a.trend - b.trend).slice(0, 5),
+      gaps: [...list]
+        .filter((s) => !s.iHaveIt)
+        .sort((a, b) => weightedScore(b) - weightedScore(a))
+        .slice(0, 6),
+      strengths: [...list]
+        .filter((s) => s.iHaveIt)
+        .sort((a, b) => weightedScore(b) - weightedScore(a))
+        .slice(0, 6),
+      rising: [...list]
+        .filter((s) => s.trend > 0)
+        .sort((a, b) => b.trend - a.trend)
+        .slice(0, 5),
+      fading: [...list]
+        .filter((s) => s.trend < 0)
+        .sort((a, b) => a.trend - b.trend)
+        .slice(0, 5),
     };
   }, [skills]);
 
   return (
     <Layout title="Skills gap">
-      <p style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 0, marginBottom: 20, maxWidth: 640 }}>
-        Required skills across your applications, weighted by how hard a requirement each one
-        was, compared against your own claimed skills. Trend compares recent applications
-        against older ones — with only a handful logged, read it as a rough signal.
+      {coverage && (
+        <p>
+          {coverage.extractedApplications}/{coverage.totalApplications}{" "}
+          applications have recorded skills. Trends require at least 10
+          applications in each comparison window.
+        </p>
+      )}
+      <p
+        style={{
+          color: "var(--text-dim)",
+          fontSize: 13,
+          marginTop: 0,
+          marginBottom: 20,
+          maxWidth: 640,
+        }}
+      >
+        Required skills across your applications, weighted by how hard a
+        requirement each one was, compared against your own claimed skills.
+        Trend compares recent applications against older ones — with only a
+        handful logged, read it as a rough signal.
       </p>
 
-      {skills === null && <p style={{ color: 'var(--text-dim)' }}>Loading…</p>}
+      {skills === null && <p style={{ color: "var(--text-dim)" }}>Loading…</p>}
 
       {skills !== null && skills.length === 0 && (
         <div className="panel">
-          <p style={{ margin: 0, color: 'var(--text-dim)' }}>
-            No data yet — tag required skills on an application, or add your own skills
-            under Skills &amp; resume, to start building this out.
+          <p style={{ margin: 0, color: "var(--text-dim)" }}>
+            No data yet — tag required skills on an application, or add your own
+            skills under Skills &amp; resume, to start building this out.
           </p>
         </div>
       )}
@@ -107,20 +158,24 @@ export function SkillsGap() {
             items={strengths}
             tone="var(--s-interview)"
           />
-          <RankedList
-            title="Rising"
-            hint="Appearing more in your recent applications than your older ones."
-            items={rising}
-            tone="var(--s-offered)"
-            mode="trend"
-          />
-          <RankedList
-            title="Fading"
-            hint="Showing up less than it used to. Could mean less relevant — or so standard it stopped being listed."
-            items={fading}
-            tone="var(--s-closed)"
-            mode="trend"
-          />
+          {coverage?.trendsAvailable && (
+            <RankedList
+              title="Rising"
+              hint="Appearing more in your recent applications than your older ones."
+              items={rising}
+              tone="var(--s-offered)"
+              mode="trend"
+            />
+          )}
+          {coverage?.trendsAvailable && (
+            <RankedList
+              title="Fading"
+              hint="Showing up less than it used to. Could mean less relevant — or so standard it stopped being listed."
+              items={fading}
+              tone="var(--s-closed)"
+              mode="trend"
+            />
+          )}
         </div>
       )}
     </Layout>

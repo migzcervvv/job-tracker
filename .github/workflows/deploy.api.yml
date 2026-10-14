@@ -1,43 +1,55 @@
 name: deploy-api
-
 on:
   push:
     branches: [main]
-    paths:
-      - "JobTracker.Api/**"
-      - "global.json"
-      - "JobTracker.Api.Tests/**"
-
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit or tag to verify and deploy; use a previously verified commit for an application rollback."
+        required: true
+        default: main
+permissions:
+  contents: read
+concurrency:
+  group: deployment-production
+  cancel-in-progress: false
 jobs:
-  build-test-deploy:
+  verify:
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+  deploy:
+    needs: verify
     runs-on: windows-latest
-
+    environment: production
     steps:
       - uses: actions/checkout@v4
-
+        with:
+          ref: ${{ needs.verify.outputs.tested-sha }}
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.0.x"
-
-      - name: Verify .NET SDK
+          global-json-file: global.json
+      - run: dotnet restore JobTracker.Api/JobTracker.Api.csproj
+      - run: dotnet tool restore
+        working-directory: JobTracker.Api
+      - name: Apply additive database migrations
+        env:
+          ConnectionStrings__Default: ${{ secrets.PRODUCTION_DATABASE }}
         run: |
-          dotnet --version
-          dotnet --info
-
-      - name: Restore
-        run: dotnet restore JobTracker.Api/JobTracker.Api.csproj
-
-      - name: Build
-        run: dotnet build JobTracker.Api/JobTracker.Api.csproj --no-restore -c Release
-
-      - name: Test
-        run: dotnet test JobTracker.Api.Tests/JobTracker.Api.Tests.csproj -c Release
-
-      - name: Publish via Web Deploy
-        run: >
-          dotnet publish JobTracker.Api/JobTracker.Api.csproj
-          -c Release
-          /p:PublishProfile=JobTracker.Api/Properties/PublishProfiles/site90996-WebDeploy.pubxml
-          /p:Username="${{ secrets.MONSTERASP_USERNAME }}"
-          /p:Password="${{ secrets.MONSTERASP_PASSWORD }}"
-          /p:AllowUntrustedCertificate=true
+          if ([string]::IsNullOrWhiteSpace($env:ConnectionStrings__Default)) { throw "PRODUCTION_DATABASE is required" }
+          dotnet ef database update --context AppDbContext
+          if ($LASTEXITCODE -ne 0) { throw "Migration gate failed" }
+        working-directory: JobTracker.Api
+      - name: Publish verified revision
+        env:
+          DEPLOY_USERNAME: ${{ secrets.MONSTERASP_USERNAME }}
+          DEPLOY_PASSWORD: ${{ secrets.MONSTERASP_PASSWORD }}
+        run: |
+          dotnet publish JobTracker.Api/JobTracker.Api.csproj -c Release /p:PublishProfile=site90996-WebDeploy /p:Username="$env:DEPLOY_USERNAME" /p:Password="$env:DEPLOY_PASSWORD" /p:AllowUntrustedCertificate=false
+          if ($LASTEXITCODE -ne 0) { throw "Deployment failed" }
+      - name: Post-deployment smoke gate
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:API_BASE_URL)) { throw "API_BASE_URL is required" }
+          ./scripts/smoke.ps1 -BaseUrl $env:API_BASE_URL

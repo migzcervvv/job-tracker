@@ -15,7 +15,15 @@ export const SKILL_LEVELS = [
 export function SkillLevelEditor({ skills, onAdd, onRemove, onLevelChange }) {
   const [inputValue, setInputValue] = useState("");
   const [adding, setAdding] = useState(false);
-  const [busyRow, setBusyRow] = useState(null);
+  const [busyRows, setBusyRows] = useState(() => new Set());
+  function markBusy(name, busy) {
+    setBusyRows((previous) => {
+      const next = new Set(previous);
+      if (busy) next.add(name);
+      else next.delete(name);
+      return next;
+    });
+  }
 
   async function handleAdd() {
     const name = inputValue.trim();
@@ -46,24 +54,24 @@ export function SkillLevelEditor({ skills, onAdd, onRemove, onLevelChange }) {
   }
 
   async function handleRemove(name) {
-    setBusyRow(name);
+    markBusy(name, true);
     try {
       await onRemove(name);
     } catch (err) {
       notify.error("Could not remove skill", extractErrorMessage(err));
     } finally {
-      setBusyRow(null);
+      markBusy(name, false);
     }
   }
 
   async function handleLevel(name, level) {
-    setBusyRow(name);
+    markBusy(name, true);
     try {
       await onLevelChange(name, level);
     } catch (err) {
       notify.error("Could not update level", extractErrorMessage(err));
     } finally {
-      setBusyRow(null);
+      markBusy(name, false);
     }
   }
 
@@ -98,6 +106,9 @@ export function SkillLevelEditor({ skills, onAdd, onRemove, onLevelChange }) {
             <li className="skill-level-row" key={s.name}>
               <span className="skill-level-name" title={s.name}>
                 {s.name}
+                {s.evidenceText && (
+                  <small className="proposal-evidence">{s.evidenceText}</small>
+                )}
               </span>
 
               <div className="skill-level-control">
@@ -107,7 +118,7 @@ export function SkillLevelEditor({ skills, onAdd, onRemove, onLevelChange }) {
                     type="button"
                     className={`skill-level-btn${s.level === lvl.value ? " active" : ""}`}
                     onClick={() => handleLevel(s.name, lvl.value)}
-                    disabled={busyRow === s.name}
+                    disabled={busyRows.has(s.name)}
                     title={lvl.label}
                   >
                     {lvl.label}
@@ -119,7 +130,7 @@ export function SkillLevelEditor({ skills, onAdd, onRemove, onLevelChange }) {
                 type="button"
                 className="myskills-row-remove"
                 onClick={() => handleRemove(s.name)}
-                disabled={busyRow === s.name}
+                disabled={busyRows.has(s.name)}
                 aria-label={`Remove ${s.name}`}
               >
                 ✕
