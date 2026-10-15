@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "../api/client.js";
 import { downloadData, parseCsv, toCsv } from "../api/portability.js";
 import { useApplications } from "../state/ApplicationsContext.jsx";
@@ -8,6 +8,8 @@ export function DataTools() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
+  const [bookmarkMessage, setBookmarkMessage] = useState("");
+  const bookmarkField = useRef(null);
   async function exportJson() {
     setBusy(true);
     setMessage("");
@@ -73,6 +75,20 @@ export function DataTools() {
     "javascript:(()=>{const q=new URLSearchParams({title:document.title,url:location.href,description:getSelection().toString()});window.open('" +
     location.origin +
     "/applications/new?'+q,'_blank','noopener');})()";
+  async function copyBookmark() {
+    try {
+      await navigator.clipboard.writeText(bookmark);
+      setBookmarkMessage(
+        "Copied. Paste this into your bookmark’s URL or Address field, then save the bookmark.",
+      );
+    } catch {
+      bookmarkField.current?.focus();
+      bookmarkField.current?.select();
+      setBookmarkMessage(
+        "Automatic copying is unavailable. The text below is selected. Copy it using your browser’s Copy command, then paste it into your bookmark’s URL or Address field.",
+      );
+    }
+  }
   return (
     <details className="panel">
       <summary>Import, export & save from your browser</summary>
@@ -129,20 +145,79 @@ export function DataTools() {
       <details style={{ marginTop: 18 }}>
         <summary>Save a job from another website</summary>
         <p>
-          Create a browser bookmark and paste the address below into its URL
-          field. On a job posting, select its description and open the bookmark.
-          You’ll get a new draft to review before saving.
+          Add a shortcut to your browser’s bookmarks so you can bring a job
+          posting into Job Tracker without copying each field separately. Set it
+          up in the browser you use to look for jobs.
         </p>
+        <h3>Set up the shortcut once</h3>
+        <ol>
+          <li>
+            Create a bookmark for this page using the star in your browser’s
+            address bar or its Bookmarks menu.
+          </li>
+          <li>
+            Name the bookmark <strong>Save to Job Tracker</strong> and save it.
+            Keep it in your bookmarks bar so it is easy to find.
+          </li>
+          <li>
+            Click <strong>Copy shortcut address</strong> below.
+          </li>
+          <li>
+            Find the bookmark you just saved. Right-click it and choose{" "}
+            <strong>Edit</strong>. On some browsers, use the Bookmarks menu to
+            edit it.
+          </li>
+          <li>
+            Replace everything in its <strong>URL</strong> or{" "}
+            <strong>Address</strong> field with the copied text, then save your
+            changes. Paste into the bookmark’s settings, not the address bar at
+            the top of your browser.
+          </li>
+        </ol>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => void copyBookmark()}
+        >
+          Copy shortcut address
+        </button>
+        {bookmarkMessage && (
+          <p className="field-hint" role="status">
+            {bookmarkMessage}
+          </p>
+        )}
         <label className="field-hint" htmlFor="browser-bookmark">
-          Bookmark address
+          Shortcut address — copy all of this text if the button does not work
         </label>
         <textarea
           id="browser-bookmark"
+          ref={bookmarkField}
           readOnly
-          aria-label="Browser capture bookmark URL"
           value={bookmark}
           onFocus={(event) => event.target.select()}
         />
+        <h3>Use it when you find a job</h3>
+        <ol>
+          <li>Open the job posting on the other website.</li>
+          <li>
+            Highlight the job description you want to bring into Job Tracker.
+          </li>
+          <li>
+            Click your <strong>Save to Job Tracker</strong> bookmark while you
+            are still on the job posting.
+          </li>
+          <li>
+            Job Tracker opens in a new tab with the page title, posting link,
+            and highlighted description filled in. Review the title, add any
+            missing details such as the company, then save the application.
+          </li>
+        </ol>
+        <p className="field-hint">
+          Nothing is saved until you review the form and save it. If the
+          description is blank, return to the job posting, highlight its
+          description, and click the bookmark again. If no new tab opens, check
+          whether your browser blocked a pop-up.
+        </p>
       </details>
       {message && (
         <p

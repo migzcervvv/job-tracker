@@ -1,5 +1,7 @@
 # n8n automation contracts
 
+[Live verification findings — 14 October 2026](LIVE_VERIFICATION.md) record the published extraction workflows, route/authentication failures, resume condition errors, and remaining test limits.
+
 For published workflows, follow [the end-to-end testing checklist](TESTING.md). It covers all six workflows, required settings, expected results, duplicate email prevention, and failure recovery.
 
 These six inactive exports are sanitized workflow templates. Static contract tests execute their Code nodes and verify paths, correlation, authentication, and execution-data settings. Import, node-version compatibility, provider responses, credentials, and live execution still require validation in the target n8n instance.

@@ -20,7 +20,14 @@ public class N8nHealthChecker(IConfiguration config, IHttpClientFactory httpFact
             var client = httpFactory.CreateClient("n8n");
             client.Timeout = TimeSpan.FromSeconds(5);
             using var res = await client.GetAsync($"{n8nBaseUrl.TrimEnd('/')}/healthz/readiness");
-            return res.IsSuccessStatusCode ? "healthy" : "unreachable";
+            if (!res.IsSuccessStatusCode ||
+                res.Content.Headers.ContentType?.MediaType is not "application/json")
+                return "unreachable";
+            using var body = await System.Text.Json.JsonDocument.ParseAsync(await res.Content.ReadAsStreamAsync());
+            return body.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                body.RootElement.TryGetProperty("status", out var status) &&
+                status.ValueKind == System.Text.Json.JsonValueKind.String && status.GetString() == "ok"
+                ? "healthy" : "unreachable";
         }
         catch
         {
