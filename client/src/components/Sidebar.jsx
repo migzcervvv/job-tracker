@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
 import { Icon } from "./Icon.jsx";
+import { ThemeToggle } from "./ThemeToggle.jsx";
 const groups = [
   {
     label: "Workspace",
@@ -20,10 +21,10 @@ const groups = [
   },
 ];
 const adminLinks = [
-  { to: "/admin/users", label: "People" },
-  { to: "/admin/skills", label: "Skill library" },
-  { to: "/admin/health", label: "System status" },
-  { to: "/admin/automation", label: "Processing history" },
+  { to: "/admin/users", label: "People", icon: "people" },
+  { to: "/admin/skills", label: "Skill library", icon: "library" },
+  { to: "/admin/health", label: "System status", icon: "health" },
+  { to: "/admin/automation", label: "Processing history", icon: "history" },
 ];
 export function Sidebar({ isOpen = false, onClose = () => {} }) {
   const { user, isAdmin, logout } = useAuth();
@@ -48,11 +49,13 @@ export function Sidebar({ isOpen = false, onClose = () => {} }) {
       aria-label="Primary"
     >
       <div className="rail-brand">
-        <span className="brand-symbol">
-          <Icon name="applications" size={22} />
-        </span>
-        <div>
-          Job Tracker<small>A little more organized.</small>
+        <div className="brand-logo">
+          <img
+            src="/jt-logo.png"
+            alt="Job Tracker"
+            width="1372"
+            height="1147"
+          />
         </div>
         <button
           className="rail-close"
@@ -77,6 +80,9 @@ export function Sidebar({ isOpen = false, onClose = () => {} }) {
           {adminLinks.map(nav)}
         </details>
       )}
+      <div className="rail-preferences">
+        <ThemeToggle />
+      </div>
       <div className="rail-foot">
         <div className="account-avatar" aria-hidden="true">
           {user?.email?.[0]?.toUpperCase() ?? "J"}

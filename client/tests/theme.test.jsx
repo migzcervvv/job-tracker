@@ -16,15 +16,15 @@ function show() {
   );
 }
 
-it("defaults to dark and persists a switch to the softer light palette", () => {
+it("defaults to light and persists a switch to the dark palette", () => {
   show();
-  expect(document.documentElement.dataset.theme).toBe("dark");
-  fireEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
   expect(document.documentElement.dataset.theme).toBe("light");
-  expect(document.documentElement.style.colorScheme).toBe("light");
-  expect(localStorage.getItem("jobtracker-theme")).toBe("light");
+  fireEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));
+  expect(document.documentElement.dataset.theme).toBe("dark");
+  expect(document.documentElement.style.colorScheme).toBe("dark");
+  expect(localStorage.getItem("jobtracker-theme")).toBe("dark");
   expect(
-    screen.getByRole("button", { name: "Switch to dark mode" }),
+    screen.getByRole("button", { name: "Switch to light mode" }),
   ).toBeTruthy();
 });
 
@@ -46,22 +46,22 @@ it("still switches themes when browser storage is blocked", () => {
     throw new Error("blocked");
   });
   show();
-  fireEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
-  expect(document.documentElement.dataset.theme).toBe("light");
+  fireEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));
+  expect(document.documentElement.dataset.theme).toBe("dark");
 });
 
 it("synchronizes theme changes from another tab", () => {
   show();
-  localStorage.setItem("jobtracker-theme", "light");
+  localStorage.setItem("jobtracker-theme", "dark");
   fireEvent(
     window,
-    new StorageEvent("storage", { key: "jobtracker-theme", newValue: "light" }),
+    new StorageEvent("storage", { key: "jobtracker-theme", newValue: "dark" }),
   );
-  expect(document.documentElement.dataset.theme).toBe("light");
+  expect(document.documentElement.dataset.theme).toBe("dark");
 });
 
-it("uses dark mode for an invalid saved preference", () => {
+it("uses light mode for an invalid saved preference", () => {
   localStorage.setItem("jobtracker-theme", "invalid");
   show();
-  expect(document.documentElement.dataset.theme).toBe("dark");
+  expect(document.documentElement.dataset.theme).toBe("light");
 });

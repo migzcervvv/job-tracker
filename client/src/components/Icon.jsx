@@ -8,6 +8,11 @@ const paths = {
   growth: "M4 19h16M6 15l4-5 4 2 5-8M15 4h4v4",
   profile: "M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0M4 21v-3a8 8 0 0 1 16 0v3",
   settings: "M4 7h16M4 17h16M8 4v6M16 14v6",
+  people:
+    "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M2 21v-2a7 7 0 0 1 14 0v2M17 4a4 4 0 0 1 0 7M19 15a6 6 0 0 1 3 5v1",
+  library: "M4 4h4v16H4zM10 4h4v16h-4zM16 5l4-1 3 15-4 1z",
+  health: "M3 12h4l3-8 4 16 3-8h4",
+  history: "M3 11a9 9 0 1 1 2 7M3 4v7h7M12 7v5l3 2",
   plus: "M12 5v14M5 12h14",
   search: "M15 15l5 5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0",
   arrow: "M5 12h14M14 7l5 5-5 5",

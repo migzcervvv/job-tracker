@@ -2,8 +2,6 @@ import { useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
 import { extractErrorMessage } from "../api/errors.js";
-import { Icon } from "../components/Icon.jsx";
-import { ThemeToggle } from "../components/ThemeToggle.jsx";
 export function Login() {
   const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -34,47 +32,18 @@ export function Login() {
   }
   return (
     <div className="login-screen">
-      <div className="login-theme">
-        <ThemeToggle />
-      </div>
-      <div className="login-story">
-        <div className="login-brand">
-          <span className="brand-symbol">
-            <Icon name="applications" size={23} />
-          </span>
-          Job Tracker
-        </div>
-        <div className="login-story-copy">
-          <span className="eyebrow">YOUR NEXT CHAPTER</span>
-          <h1>
-            Less to keep in your head.
-            <br />
-            More room to move forward.
-          </h1>
-          <p>
-            Keep your applications, interviews and next steps in one calm,
-            organized place.
-          </p>
-          <div className="login-feature">
-            <Icon name="check" />
-            Every opportunity, in one place
-          </div>
-          <div className="login-feature">
-            <Icon name="check" />
-            Clear next steps and follow-ups
-          </div>
-          <div className="login-feature">
-            <Icon name="check" />
-            Your experience, ready for the right role
-          </div>
-        </div>
-        <small>One application. One next step. A little more clarity.</small>
-      </div>
       <div className="login-form-area">
         <div className="login-card">
-          <span className="eyebrow">WELCOME BACK</span>
-          <h2>A fresh start, right here.</h2>
-          <p className="login-sub">Sign in to pick up where you left off.</p>
+          <div className="brand-logo login-logo">
+            <img
+              src="/jt-logo.png"
+              alt="Job Tracker"
+              width="1372"
+              height="1147"
+            />
+          </div>
+          <h1>Welcome back</h1>
+          <p className="login-sub">Sign in to your workspace.</p>
           <form onSubmit={handleSubmit}>
             <div className="field">
               <label htmlFor="email">Email address</label>
@@ -113,7 +82,6 @@ export function Login() {
               disabled={submitting}
             >
               {submitting ? "Signing you in…" : "Sign in"}
-              <Icon name="arrow" size={18} />
             </button>
           </form>
           <p className="login-help">

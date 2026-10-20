@@ -5,9 +5,9 @@ const storageKey = "jobtracker-theme";
 
 function readTheme() {
   try {
-    return localStorage.getItem(storageKey) === "light" ? "light" : "dark";
+    return localStorage.getItem(storageKey) === "dark" ? "dark" : "light";
   } catch {
-    return "dark";
+    return "light";
   }
 }
 
@@ -18,7 +18,7 @@ export function ThemeProvider({ children }) {
     document.documentElement.style.colorScheme = theme;
     document
       .querySelector('meta[name="theme-color"]')
-      ?.setAttribute("content", theme === "dark" ? "#18211d" : "#e6ebe5");
+      ?.setAttribute("content", theme === "dark" ? "#191a1c" : "#f7f7f5");
     try {
       localStorage.setItem(storageKey, theme);
     } catch {

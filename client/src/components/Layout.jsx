@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { Sidebar } from "./Sidebar.jsx";
-import { ThemeToggle } from "./ThemeToggle.jsx";
 const descriptions = {
   Applications: "Keep track of every opportunity, one next step at a time.",
   "New application":
@@ -57,7 +56,6 @@ export function Layout({ title, description, actions, children }) {
               <span />
             </button>
             <div>
-              <div className="page-eyebrow">YOUR WORKSPACE</div>
               <h1>{title}</h1>
               {(description ?? descriptions[title]) && (
                 <p className="page-description">
@@ -66,17 +64,11 @@ export function Layout({ title, description, actions, children }) {
               )}
             </div>
           </div>
-          <div className="topbar-actions">
-            <ThemeToggle />
-            {actions}
-          </div>
+          {actions && <div className="topbar-actions">{actions}</div>}
         </header>
         <main className="content" id="main-content" tabIndex={-1}>
           {children}
         </main>
-        <footer className="workspace-footer">
-          Your next opportunity starts with a next step.
-        </footer>
       </div>
     </div>
   );

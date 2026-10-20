@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Layout } from "../components/Layout.jsx";
 import { ResumeUpload } from "../components/ResumeUpload.jsx";
 import { ResumeExtractionModal } from "../components/ResumeExtractionModal.jsx";
 import {
   listResumes,
-  getResumeDownloadUrl,
   deleteResume,
   retryResumeExtraction,
   activateResume,
@@ -14,10 +13,12 @@ import { notify } from "../notify.js";
 import { useApplications } from "../state/ApplicationsContext.jsx";
 import { progressLabel } from "../api/progress.js";
 import { Icon } from "../components/Icon.jsx";
+const ResumePreview = lazy(() => import("../components/ResumePreview.jsx"));
 export function ResumeManager() {
   const { invalidate } = useApplications();
   const [resumes, setResumes] = useState([]);
   const [review, setReview] = useState(null);
+  const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -72,21 +73,6 @@ export function ResumeManager() {
       setBusy(false);
     }
   }
-  async function download(resume) {
-    try {
-      const url = await getResumeDownloadUrl(resume.id);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.target = "_blank";
-      anchor.rel = "noreferrer";
-      anchor.download = resume.fileName;
-      anchor.click();
-      if (url.startsWith("blob:"))
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch (err) {
-      notify.error("Could not open resume", extractErrorMessage(err));
-    }
-  }
   return (
     <Layout title="Resumes">
       <p>
@@ -137,8 +123,8 @@ export function ResumeManager() {
               <button disabled={busy} onClick={() => setReview(resume)}>
                 Review skills
               </button>
-              <button disabled={busy} onClick={() => void download(resume)}>
-                Open
+              <button disabled={busy} onClick={() => setPreview(resume)}>
+                Preview
               </button>
               <button
                 disabled={
@@ -171,6 +157,15 @@ export function ResumeManager() {
           </div>
         ))}
       </div>
+      {preview && (
+        <Suspense fallback={<p role="status">Opening resume preview…</p>}>
+          <ResumePreview
+            key={preview.id}
+            resume={preview}
+            onClose={() => setPreview(null)}
+          />
+        </Suspense>
+      )}
       <ResumeExtractionModal
         resume={review}
         onClose={() => {

@@ -3,19 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <script>
-      // Apply the saved palette before styles load to avoid a bright first frame.
+      // Apply the saved palette before styles load to avoid a theme flash.
       try {
         document.documentElement.dataset.theme =
-          localStorage.getItem("jobtracker-theme") === "light"
-            ? "light"
-            : "dark";
+          localStorage.getItem("jobtracker-theme") === "dark"
+            ? "dark"
+            : "light";
       } catch {
-        document.documentElement.dataset.theme = "dark";
+        document.documentElement.dataset.theme = "light";
       }
     </script>
     <link rel="icon" type="image/png" href="/jt-logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#27664c" />
+    <meta name="theme-color" content="#f7f7f5" />
     <meta
       name="description"
       content="Keep your job applications, interviews, resumes and next steps organized in one place."

@@ -15,6 +15,24 @@ export async function getResumeDownloadUrl(id) {
       .data,
   );
 }
+export async function getResumePreviewFile(id, signal) {
+  const { data } = await api.get(`/api/resumes/${id}/download`, { signal });
+  if (data.demo) {
+    return (
+      await api.get(`/api/resumes/${id}/content`, {
+        responseType: "blob",
+        signal,
+      })
+    ).data;
+  }
+  // Signed storage URLs do not need the application's Authorization header.
+  const response = await fetch(data.url, { signal, credentials: "omit" });
+  if (!response.ok)
+    throw new Error(
+      "The resume could not be loaded. Close the preview and try again.",
+    );
+  return response.blob();
+}
 export async function deleteResume(id) {
   await api.delete(`/api/resumes/${id}`);
 }

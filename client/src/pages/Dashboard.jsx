@@ -486,6 +486,7 @@ export function Dashboard() {
                       <td data-label="Stage">
                         <select
                           className="status-select"
+                          data-status={a.status}
                           aria-label={"Stage for " + a.title}
                           value={a.status}
                           disabled={bulkBusy || working.has(a.id)}
